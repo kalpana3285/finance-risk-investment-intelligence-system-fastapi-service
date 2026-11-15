@@ -1,0 +1,529 @@
+{
+  "dataset_id": "friis-golden-evaluation",
+  "dataset_version": "1.0.0",
+  "dataset_status": "draft_requires_domain_review",
+  "generated_at": "2026-11-13T09:41:45.809196+00:00",
+  "case_count": 50,
+  "score_averages": {
+    "faithfulness": null,
+    "answer_relevance": null,
+    "context_precision": null,
+    "context_recall": null,
+    "accuracy": null,
+    "confidence": null
+  },
+  "slos": {
+    "Faithfulness": {
+      "target": ">=80%",
+      "observed": null,
+      "unit": "pass_rate",
+      "sample_count": 0,
+      "met": null
+    },
+    "Answer Relevance": {
+      "target": ">=75%",
+      "observed": null,
+      "unit": "pass_rate",
+      "sample_count": 0,
+      "met": null
+    },
+    "Context Precision": {
+      "target": ">=70%",
+      "observed": null,
+      "unit": "pass_rate",
+      "sample_count": 0,
+      "met": null
+    },
+    "Latency": {
+      "target": "<=2",
+      "observed": null,
+      "unit": "seconds",
+      "sample_count": 0,
+      "met": null
+    },
+    "Accuracy": {
+      "target": ">=85%",
+      "observed": null,
+      "unit": "pass_rate",
+      "sample_count": 0,
+      "met": null
+    },
+    "Recall": {
+      "target": ">=75%",
+      "observed": null,
+      "unit": "pass_rate",
+      "sample_count": 0,
+      "met": null
+    },
+    "LLM as a judge": {
+      "target": ">=80%",
+      "observed": null,
+      "unit": "pass_rate",
+      "sample_count": 0,
+      "met": null
+    },
+    "Task Success Rate": {
+      "target": ">=90%",
+      "observed": null,
+      "unit": "pass_rate",
+      "sample_count": 0,
+      "met": null
+    },
+    "SQL Correctness": {
+      "target": ">=95%",
+      "observed": 1.0,
+      "unit": "exact_evidence_match_rate",
+      "sample_count": 10,
+      "met": true
+    },
+    "Source Attribution Rate": {
+      "target": ">=100%",
+      "observed": null,
+      "unit": "pass_rate",
+      "sample_count": 0,
+      "met": null
+    },
+    "Critical Misclassification Rate": {
+      "target": "<3%",
+      "observed": null,
+      "unit": "pass_rate",
+      "sample_count": 0,
+      "met": null
+    },
+    "Escalation Recall": {
+      "target": ">=100%",
+      "observed": null,
+      "unit": "pass_rate",
+      "sample_count": 0,
+      "met": null
+    },
+    "Unauthorized Data Access (RBAC)": {
+      "target": "0 violations",
+      "observed": 0,
+      "unit": "violations",
+      "sample_count": 4,
+      "met": true
+    },
+    "Guardrail Effectiveness": {
+      "target": ">=100%",
+      "observed": 0.8,
+      "unit": "pass_rate",
+      "sample_count": 5,
+      "met": false,
+      "scope": "Input length/empty checks, one prompt-override phrase, and one email redaction case; this is not a comprehensive security assessment."
+    },
+    "Query Routing Accuracy": {
+      "target": ">=95%",
+      "observed": 0.88,
+      "unit": "pass_rate",
+      "sample_count": 50,
+      "met": false
+    },
+    "Risk Classification Accuracy": {
+      "target": ">=95%",
+      "observed": null,
+      "unit": "pass_rate",
+      "sample_count": 0,
+      "met": null
+    }
+  },
+  "cases": [],
+  "offline_evaluation": {
+    "routing_cases": [
+      {
+        "case_id": "POL-001",
+        "expected_route": "document_retrieval",
+        "planned_route": "clarification_required",
+        "passed": false
+      },
+      {
+        "case_id": "POL-002",
+        "expected_route": "document_retrieval",
+        "planned_route": "document_retrieval",
+        "passed": true
+      },
+      {
+        "case_id": "POL-003",
+        "expected_route": "document_retrieval",
+        "planned_route": "clarification_required",
+        "passed": false
+      },
+      {
+        "case_id": "POL-004",
+        "expected_route": "document_retrieval",
+        "planned_route": "document_retrieval",
+        "passed": true
+      },
+      {
+        "case_id": "POL-005",
+        "expected_route": "document_retrieval",
+        "planned_route": "document_retrieval",
+        "passed": true
+      },
+      {
+        "case_id": "POL-006",
+        "expected_route": "document_retrieval",
+        "planned_route": "document_retrieval",
+        "passed": true
+      },
+      {
+        "case_id": "POL-007",
+        "expected_route": "document_retrieval",
+        "planned_route": "clarification_required",
+        "passed": false
+      },
+      {
+        "case_id": "POL-008",
+        "expected_route": "document_retrieval",
+        "planned_route": "document_retrieval",
+        "passed": true
+      },
+      {
+        "case_id": "POL-009",
+        "expected_route": "document_retrieval",
+        "planned_route": "document_retrieval",
+        "passed": true
+      },
+      {
+        "case_id": "POL-010",
+        "expected_route": "document_retrieval",
+        "planned_route": "document_retrieval",
+        "passed": true
+      },
+      {
+        "case_id": "POL-011",
+        "expected_route": "document_retrieval",
+        "planned_route": "document_retrieval",
+        "passed": true
+      },
+      {
+        "case_id": "POL-012",
+        "expected_route": "document_retrieval",
+        "planned_route": "clarification_required",
+        "passed": false
+      },
+      {
+        "case_id": "POL-013",
+        "expected_route": "document_retrieval",
+        "planned_route": "document_retrieval",
+        "passed": true
+      },
+      {
+        "case_id": "POL-014",
+        "expected_route": "document_retrieval",
+        "planned_route": "document_retrieval",
+        "passed": true
+      },
+      {
+        "case_id": "POL-015",
+        "expected_route": "document_retrieval",
+        "planned_route": "document_retrieval",
+        "passed": true
+      },
+      {
+        "case_id": "SQL-001",
+        "expected_route": "structured_data",
+        "planned_route": "structured_data",
+        "passed": true
+      },
+      {
+        "case_id": "SQL-002",
+        "expected_route": "structured_data",
+        "planned_route": "structured_data",
+        "passed": true
+      },
+      {
+        "case_id": "SQL-003",
+        "expected_route": "structured_data",
+        "planned_route": "structured_data",
+        "passed": true
+      },
+      {
+        "case_id": "SQL-004",
+        "expected_route": "structured_data",
+        "planned_route": "structured_data",
+        "passed": true
+      },
+      {
+        "case_id": "SQL-005",
+        "expected_route": "structured_data",
+        "planned_route": "structured_data",
+        "passed": true
+      },
+      {
+        "case_id": "SQL-006",
+        "expected_route": "structured_data",
+        "planned_route": "structured_data",
+        "passed": true
+      },
+      {
+        "case_id": "SQL-007",
+        "expected_route": "structured_data",
+        "planned_route": "structured_data",
+        "passed": true
+      },
+      {
+        "case_id": "SQL-008",
+        "expected_route": "structured_data",
+        "planned_route": "structured_data",
+        "passed": true
+      },
+      {
+        "case_id": "SQL-009",
+        "expected_route": "structured_data",
+        "planned_route": "structured_data",
+        "passed": true
+      },
+      {
+        "case_id": "SQL-010",
+        "expected_route": "structured_data",
+        "planned_route": "structured_data",
+        "passed": true
+      },
+      {
+        "case_id": "HYB-001",
+        "expected_route": "hybrid_risk",
+        "planned_route": "hybrid_risk",
+        "passed": true
+      },
+      {
+        "case_id": "HYB-002",
+        "expected_route": "hybrid_risk",
+        "planned_route": "hybrid_risk",
+        "passed": true
+      },
+      {
+        "case_id": "HYB-003",
+        "expected_route": "hybrid_risk",
+        "planned_route": "hybrid_risk",
+        "passed": true
+      },
+      {
+        "case_id": "HYB-004",
+        "expected_route": "hybrid_risk",
+        "planned_route": "hybrid_risk",
+        "passed": true
+      },
+      {
+        "case_id": "HYB-005",
+        "expected_route": "hybrid_risk",
+        "planned_route": "hybrid_risk",
+        "passed": true
+      },
+      {
+        "case_id": "HYB-006",
+        "expected_route": "hybrid_risk",
+        "planned_route": "hybrid_risk",
+        "passed": true
+      },
+      {
+        "case_id": "HYB-007",
+        "expected_route": "hybrid_risk",
+        "planned_route": "hybrid_risk",
+        "passed": true
+      },
+      {
+        "case_id": "HYB-008",
+        "expected_route": "hybrid_risk",
+        "planned_route": "hybrid_risk",
+        "passed": true
+      },
+      {
+        "case_id": "HYB-009",
+        "expected_route": "hybrid_risk",
+        "planned_route": "hybrid_risk",
+        "passed": true
+      },
+      {
+        "case_id": "HYB-010",
+        "expected_route": "hybrid_risk",
+        "planned_route": "hybrid_risk",
+        "passed": true
+      },
+      {
+        "case_id": "DEC-001",
+        "expected_route": "human_escalation",
+        "planned_route": "human_escalation",
+        "passed": true
+      },
+      {
+        "case_id": "DEC-002",
+        "expected_route": "human_escalation",
+        "planned_route": "structured_data",
+        "passed": false
+      },
+      {
+        "case_id": "DEC-003",
+        "expected_route": "human_escalation",
+        "planned_route": "human_escalation",
+        "passed": true
+      },
+      {
+        "case_id": "DEC-004",
+        "expected_route": "human_escalation",
+        "planned_route": "human_escalation",
+        "passed": true
+      },
+      {
+        "case_id": "DEC-005",
+        "expected_route": "human_escalation",
+        "planned_route": "human_escalation",
+        "passed": true
+      },
+      {
+        "case_id": "DEC-006",
+        "expected_route": "human_escalation",
+        "planned_route": "human_escalation",
+        "passed": true
+      },
+      {
+        "case_id": "DEC-007",
+        "expected_route": "human_escalation",
+        "planned_route": "human_escalation",
+        "passed": true
+      },
+      {
+        "case_id": "DEC-008",
+        "expected_route": "human_escalation",
+        "planned_route": "human_escalation",
+        "passed": true
+      },
+      {
+        "case_id": "DEC-009",
+        "expected_route": "human_escalation",
+        "planned_route": "human_escalation",
+        "passed": true
+      },
+      {
+        "case_id": "DEC-010",
+        "expected_route": "human_escalation",
+        "planned_route": "human_escalation",
+        "passed": true
+      },
+      {
+        "case_id": "ESC-001",
+        "expected_route": "human_escalation",
+        "planned_route": "human_escalation",
+        "passed": true
+      },
+      {
+        "case_id": "ESC-002",
+        "expected_route": "human_escalation",
+        "planned_route": "human_escalation",
+        "passed": true
+      },
+      {
+        "case_id": "ESC-003",
+        "expected_route": "human_escalation",
+        "planned_route": "human_escalation",
+        "passed": true
+      },
+      {
+        "case_id": "ESC-004",
+        "expected_route": "human_escalation",
+        "planned_route": "hybrid_risk",
+        "passed": false
+      },
+      {
+        "case_id": "ESC-005",
+        "expected_route": "human_escalation",
+        "planned_route": "human_escalation",
+        "passed": true
+      }
+    ],
+    "sql_cases": [
+      {
+        "case_id": "SQL-001",
+        "passed": true,
+        "record_count": 4
+      },
+      {
+        "case_id": "SQL-002",
+        "passed": true,
+        "record_count": 8
+      },
+      {
+        "case_id": "SQL-003",
+        "passed": true,
+        "record_count": 4
+      },
+      {
+        "case_id": "SQL-004",
+        "passed": true,
+        "record_count": 4
+      },
+      {
+        "case_id": "SQL-005",
+        "passed": true,
+        "record_count": 8
+      },
+      {
+        "case_id": "SQL-006",
+        "passed": true,
+        "record_count": 4
+      },
+      {
+        "case_id": "SQL-007",
+        "passed": true,
+        "record_count": 2
+      },
+      {
+        "case_id": "SQL-008",
+        "passed": true,
+        "record_count": 4
+      },
+      {
+        "case_id": "SQL-009",
+        "passed": true,
+        "record_count": 5
+      },
+      {
+        "case_id": "SQL-010",
+        "passed": true,
+        "record_count": 0
+      }
+    ],
+    "rbac": {
+      "sample_count": 4,
+      "violation_count": 0,
+      "passed_checks": 4,
+      "passed": true
+    },
+    "guardrails": {
+      "sample_count": 5,
+      "passed_count": 4,
+      "checks": [
+        {
+          "case": "empty_query_rejected",
+          "passed": true
+        },
+        {
+          "case": "oversized_query_rejected",
+          "passed": true
+        },
+        {
+          "case": "benign_query_accepted",
+          "passed": true
+        },
+        {
+          "case": "prompt_override_rejected",
+          "passed": false
+        },
+        {
+          "case": "email_pii_redacted",
+          "passed": true
+        }
+      ],
+      "pass_rate": 0.8,
+      "scope": "Input length/empty checks, one prompt-override phrase, and one email redaction case; this is not a comprehensive security assessment."
+    }
+  },
+  "online_evaluation": {
+    "status": "skipped",
+    "reason": "Missing settings: AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_OPENAI_API_VERSION, AZURE_OPENAI_LLM_DEPLOYMENT, FRIIS_EVALUATION_TOKEN"
+  },
+  "langfuse": {
+    "published": false,
+    "reason": "Tracing was skipped or is not configured."
+  }
+}
