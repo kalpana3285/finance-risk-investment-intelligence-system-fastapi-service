@@ -1,0 +1,10 @@
+.env
+.venv/
+D:data/
+tests/
+evaluation/
+.ruff_cache/
+.test-cache/
+__pycache__/
+logger.txt
+logfile

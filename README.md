@@ -76,9 +76,18 @@ and sign in through Auth0. The flow requests the configured
 
 Create a second Vercel project for this repository; keep the frontend project
 rooted at the repository root and set this backend project's **Root Directory**
-to `backend`. The existing `backend/vercel.json` sends requests to `main.py`,
-which exports the FastAPI `app`. Vercel reads the Python version and dependencies
-from `pyproject.toml`/`uv.lock` (Python 3.12).
+to the directory containing `main.py`, `pyproject.toml`, and `vercel.json`.
+Vercel detects the FastAPI app exported by `main.py` and reads the Python version
+and dependencies from `pyproject.toml`/`uv.lock` (Python 3.12).
+
+The current dependency set produces a Python function bundle larger than the
+standard 500 MB limit. On an eligible project with Fluid Compute and Active CPU
+enabled, set the Vercel project environment variable
+`VERCEL_SUPPORT_LARGE_FUNCTIONS=1` for the deployment environments, then
+redeploy. Vercel's Large Functions beta supports bundles up to 5 GB. The
+`functions` configuration excludes local PostgreSQL data and non-runtime test
+and evaluation files; `.vercelignore` also keeps local environment files and
+development artifacts out of deployments.
 
 Add these environment variables to the Vercel project for each environment:
 
@@ -88,6 +97,7 @@ Add these environment variables to the Vercel project for each environment:
 - `FRIIS_CORS_ALLOW_ORIGINS`: comma-separated exact frontend origins, for example
   `https://project-3-finance-risk-investment-i.vercel.app`.
 - `FRIIS_AUTO_CREATE_SCHEMA=false`: apply reviewed database migrations separately.
+- `VERCEL_SUPPORT_LARGE_FUNCTIONS=1`: required while the Python function bundle exceeds 500 MB.
 
 After deploying, set `VITE_API_BASE_URL` in the frontend Vercel project to this
 backend's HTTPS deployment URL and redeploy the frontend. The backend currently
