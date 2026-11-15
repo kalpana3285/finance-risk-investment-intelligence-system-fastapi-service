@@ -16,6 +16,7 @@ class RuntimeSettings:
     database_url: str
     auth0_domain: str
     auth0_api_audience: str
+    auth0_swagger_client_id: str = ""
     cors_allowed_origins: tuple[str, ...] = ()
     azure_openai_endpoint: str = ""
     azure_openai_api_key: str = ""
@@ -43,7 +44,8 @@ class RuntimeSettings:
 
     @classmethod
     def from_environment(cls, env_file: Path | None = None) -> "RuntimeSettings":
-        default_env_file = Path(__file__).resolve().parents[1] / ".env"
+        project_root = Path(__file__).resolve().parents[1]
+        default_env_file = project_root / ".env"
         load_dotenv(dotenv_path=env_file or default_env_file, override=False)
         database_url = _database_url_from_environment()
         required = {
@@ -84,6 +86,9 @@ class RuntimeSettings:
             database_url=required["FRIIS_DATABASE_URL"] or "",
             auth0_domain=required["FRIIS_AUTH0_DOMAIN"] or "",
             auth0_api_audience=required["FRIIS_AUTH0_API_AUDIENCE"] or "",
+            auth0_swagger_client_id=os.getenv(
+                "FRIIS_AUTH0_SWAGGER_CLIENT_ID", ""
+            ).strip(),
             cors_allowed_origins=tuple(
                 origin.strip().rstrip("/")
                 for origin in os.getenv("FRIIS_CORS_ALLOW_ORIGINS", "").split(",")
@@ -98,11 +103,8 @@ class RuntimeSettings:
             azure_openai_llm_deployment=(
                 os.getenv("AZURE_OPENAI_LLM_DEPLOYMENT") or ""
             ),
-            documents_root=Path(
-                os.getenv(
-                    "FRIIS_DOCUMENTS_ROOT",
-                    str(Path(__file__).resolve().parents[2] / "Documents"),
-                )
+            documents_root=(
+                project_root / os.getenv("FRIIS_DOCUMENTS_ROOT", "Documents")
             ).resolve(),
             embedding_dimensions=embedding_dimensions,
             ingestion_worker_enabled=ingestion_worker_enabled,

@@ -502,3 +502,130 @@ def test_openapi_exposes_all_ten_documented_routes(client: TestClient) -> None:
         "format": "binary",
         "title": "File",
     }
+
+
+def test_swagger_uses_auth0_authorization_code_with_pkce() -> None:
+    app = create_app(
+        FakeAPIService(),
+        FakeAuthenticator(),
+        auth0_domain="tenant.example.auth0.com",
+        auth0_api_audience="https://api.example.test",
+        swagger_oauth_client_id="swagger-client-id",
+    )
+    client = TestClient(app)
+
+    openapi = client.get("/openapi.json").json()
+    security_scheme = openapi["components"]["securitySchemes"]["HTTPBearer"]
+    assert {"HTTPBearer": []} in openapi["paths"]["/api/v1/queries"]["post"][
+        "security"
+    ]
+    assert security_scheme == {
+        "type": "oauth2",
+        "flows": {
+            "authorizationCode": {
+                "authorizationUrl": "https://tenant.example.auth0.com/authorize",
+                "tokenUrl": "/auth/token",
+                "scopes": {},
+            }
+        },
+    }
+    assert app.swagger_ui_init_oauth == {
+        "clientId": "swagger-client-id",
+        "usePkceWithAuthorizationCodeGrant": True,
+        "additionalQueryStringParams": {"audience": "https://api.example.test"},
+    }
+    docs = TestClient(app).get("/docs")
+    assert docs.status_code == 200
+    assert "ui.initOAuth" in docs.text
+    assert "swagger-client-id" in docs.text
+
+
+def test_swagger_token_endpoint_exchanges_code_with_auth0(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[tuple[str, dict[str, str]]] = []
+
+    class MockAuth0Response:
+        status_code = 200
+        content = b'{"access_token":"test-access-token","token_type":"Bearer"}'
+
+    class MockAuth0Client:
+        def __init__(self, *, timeout: float) -> None:
+            assert timeout == 5.0
+
+        async def __aenter__(self) -> "MockAuth0Client":
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def post(self, url: str, *, data: dict[str, str]) -> MockAuth0Response:
+            requests.append((url, data))
+            return MockAuth0Response()
+
+    monkeypatch.setattr("routes.auth.httpx.AsyncClient", MockAuth0Client)
+    app = create_app(
+        FakeAPIService(),
+        FakeAuthenticator(),
+        auth0_domain="tenant.example.auth0.com",
+        auth0_api_audience="https://api.example.test",
+        swagger_oauth_client_id="swagger-client-id",
+    )
+
+    response = TestClient(app).post(
+        "/auth/token",
+        data={
+            "grant_type": "authorization_code",
+            "client_id": "swagger-client-id",
+            "code": "one-time-code",
+            "redirect_uri": "http://testserver/docs/oauth2-redirect",
+            "code_verifier": "pkce-code-verifier",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["access_token"] == "test-access-token"
+    assert response.headers["cache-control"] == "no-store"
+    assert requests == [
+        (
+            "https://tenant.example.auth0.com/oauth/token",
+            {
+                "grant_type": "authorization_code",
+                "client_id": "swagger-client-id",
+                "code": "one-time-code",
+                "redirect_uri": "http://testserver/docs/oauth2-redirect",
+                "code_verifier": "pkce-code-verifier",
+                "audience": "https://api.example.test",
+            },
+        )
+    ]
+
+
+def test_swagger_token_endpoint_rejects_unconfigured_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_auth0_call(**_kwargs: object) -> None:
+        raise AssertionError("Auth0 must not be called for a mismatched client")
+
+    monkeypatch.setattr("routes.auth.httpx.AsyncClient", unexpected_auth0_call)
+    app = create_app(
+        FakeAPIService(),
+        FakeAuthenticator(),
+        auth0_domain="tenant.example.auth0.com",
+        auth0_api_audience="https://api.example.test",
+        swagger_oauth_client_id="swagger-client-id",
+    )
+
+    response = TestClient(app).post(
+        "/auth/token",
+        data={
+            "grant_type": "authorization_code",
+            "client_id": "other-client",
+            "code": "one-time-code",
+            "redirect_uri": "http://testserver/docs/oauth2-redirect",
+            "code_verifier": "pkce-code-verifier",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_client"

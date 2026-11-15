@@ -1,0 +1,86 @@
+2026-11-04 22:13:08.724 EST [77231] LOG:  starting PostgreSQL 18.4 (Homebrew) on aarch64-apple-darwin24.6.0, compiled by Apple clang version 17.0.0 (clang-1700.6.4.2), 64-bit
+2026-11-04 22:13:08.725 EST [77231] LOG:  listening on IPv6 address "::1", port 9000
+2026-11-04 22:13:08.725 EST [77231] LOG:  listening on IPv4 address "127.0.0.1", port 9000
+2026-11-04 22:13:08.725 EST [77231] LOG:  listening on Unix socket "/tmp/.s.PGSQL.9000"
+2026-11-04 22:13:08.727 EST [77237] LOG:  database system was shut down at 2026-11-04 22:12:29 EST
+2026-11-04 22:13:08.729 EST [77231] LOG:  database system is ready to accept connections
+2026-11-04 22:18:08.728 EST [77235] LOG:  checkpoint starting: time
+2026-11-04 22:18:13.201 EST [77235] LOG:  checkpoint complete: wrote 44 buffers (0.3%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=4.469 s, sync=0.002 s, total=4.474 s; sync files=11, longest=0.001 s, average=0.001 s; distance=334 kB, estimate=334 kB; lsn=0/17DEAA0, redo lsn=0/17DEA10
+2026-11-04 22:38:10.340 EST [89159] ERROR:  extension "vector" is not available
+2026-11-04 22:38:10.340 EST [89159] HINT:  The extension must first be installed on the system where PostgreSQL is running.
+2026-11-04 22:38:10.340 EST [89159] STATEMENT:  CREATE EXTENSION IF NOT EXISTS vector
+2026-11-04 22:55:10.540 EST [92864] FATAL:  database "friis" does not exist
+2026-11-04 22:55:10.541 EST [92865] FATAL:  database "friis" does not exist
+2026-11-04 22:55:35.550 EST [93261] FATAL:  database "friis" does not exist
+2026-11-04 22:55:35.551 EST [93262] FATAL:  database "friis" does not exist
+2026-11-04 22:59:00.937 EST [95186] FATAL:  database "friis" does not exist
+2026-11-04 22:59:00.938 EST [95187] FATAL:  database "friis" does not exist
+2026-11-04 22:59:40.322 EST [77420] ERROR:  syntax error at or near "/" at character 23
+2026-11-04 22:59:40.322 EST [77420] STATEMENT:  create database friis
+	/ls
+	show databases;
+2026-11-04 22:59:44.953 EST [77420] ERROR:  syntax error at or near "/" at character 1
+2026-11-04 22:59:44.953 EST [77420] STATEMENT:  /ls
+	show database;
+2026-11-04 22:59:51.550 EST [77420] ERROR:  unrecognized configuration parameter "database"
+2026-11-04 22:59:51.550 EST [77420] STATEMENT:  show database;
+2026-11-04 23:08:08.225 EST [77235] LOG:  checkpoint starting: time
+2026-11-04 23:08:27.122 EST [98538] ERROR:  extension "vector" is not available
+2026-11-04 23:08:27.122 EST [98538] HINT:  The extension must first be installed on the system where PostgreSQL is running.
+2026-11-04 23:08:27.122 EST [98538] STATEMENT:  CREATE EXTENSION IF NOT EXISTS vector;
+2026-11-04 23:08:44.513 EST [98716] ERROR:  extension "vector" is not available
+2026-11-04 23:08:44.513 EST [98716] HINT:  The extension must first be installed on the system where PostgreSQL is running.
+2026-11-04 23:08:44.513 EST [98716] STATEMENT:  CREATE EXTENSION IF NOT EXISTS vector;
+2026-11-04 23:09:45.992 EST [77235] LOG:  checkpoint complete: wrote 965 buffers (5.9%), wrote 1 SLRU buffers; 1 WAL file(s) added, 0 removed, 0 recycled; write=97.747 s, sync=0.008 s, total=97.767 s; sync files=302, longest=0.001 s, average=0.001 s; distance=4448 kB, estimate=4448 kB; lsn=0/1C36B70, redo lsn=0/1C36AE0
+2026-11-04 23:12:42.737 EST [981] FATAL:  lock file "postmaster.pid" already exists
+2026-11-04 23:12:42.737 EST [981] HINT:  Is another postmaster (PID 77231) running in data directory "/Users/kalpana/niit_assignments/course5-capstone-project/project-description/Project-3-Finance Risk & Investment Intelligence System/D:data"?
+2026-11-04 23:12:52.942 EST [1185] FATAL:  lock file "postmaster.pid" already exists
+2026-11-04 23:12:52.942 EST [1185] HINT:  Is another postmaster (PID 77231) running in data directory "/Users/kalpana/niit_assignments/course5-capstone-project/project-description/Project-3-Finance Risk & Investment Intelligence System/D:data"?
+2026-11-04 23:34:02.934 EST [77235] LOG:  checkpoint starting: time
+2026-11-04 23:34:48.047 EST [77235] LOG:  checkpoint complete: wrote 445 buffers (2.7%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=45.102 s, sync=0.007 s, total=45.114 s; sync files=172, longest=0.001 s, average=0.001 s; distance=2997 kB, estimate=4303 kB; lsn=0/1F24150, redo lsn=0/1F240C0
+2026-11-04 23:39:02.050 EST [77235] LOG:  checkpoint starting: time
+2026-11-04 23:39:02.462 EST [77235] LOG:  checkpoint complete: wrote 4 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.407 s, sync=0.001 s, total=0.413 s; sync files=5, longest=0.001 s, average=0.001 s; distance=14 kB, estimate=3874 kB; lsn=0/1F27930, redo lsn=0/1F278D8
+2026-11-05 00:33:15.302 EST [77235] LOG:  checkpoint starting: time
+2026-11-05 00:33:17.663 EST [77235] LOG:  checkpoint complete: wrote 23 buffers (0.1%), wrote 0 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=2.355 s, sync=0.002 s, total=2.362 s; sync files=8, longest=0.001 s, average=0.001 s; distance=162 kB, estimate=3503 kB; lsn=0/1F503D8, redo lsn=0/1F50380
+2026-11-05 02:42:41.393 EST [77235] LOG:  checkpoint starting: time
+2026-11-05 02:42:41.804 EST [77235] LOG:  checkpoint complete: wrote 4 buffers (0.0%), wrote 0 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.407 s, sync=0.001 s, total=0.412 s; sync files=2, longest=0.001 s, average=0.001 s; distance=32 kB, estimate=3155 kB; lsn=0/1F58440, redo lsn=0/1F583E8
+2026-11-05 02:47:41.802 EST [77235] LOG:  checkpoint starting: time
+2026-11-05 02:47:42.211 EST [77235] LOG:  checkpoint complete: wrote 4 buffers (0.0%), wrote 0 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.406 s, sync=0.001 s, total=0.410 s; sync files=4, longest=0.001 s, average=0.001 s; distance=15 kB, estimate=2841 kB; lsn=0/1F5C3A8, redo lsn=0/1F5C350
+2026-11-05 02:52:41.210 EST [77235] LOG:  checkpoint starting: time
+2026-11-05 02:52:41.316 EST [77235] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.103 s, sync=0.001 s, total=0.107 s; sync files=2, longest=0.001 s, average=0.001 s; distance=4 kB, estimate=2558 kB; lsn=0/1F5D5B8, redo lsn=0/1F5D560
+2026-11-05 02:57:41.375 EST [77235] LOG:  checkpoint starting: time
+2026-11-05 02:57:47.246 EST [77235] LOG:  checkpoint complete: wrote 58 buffers (0.4%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=5.865 s, sync=0.003 s, total=5.871 s; sync files=42, longest=0.001 s, average=0.001 s; distance=342 kB, estimate=2336 kB; lsn=0/1FB31A0, redo lsn=0/1FB3148
+2026-11-05 03:02:41.248 EST [77235] LOG:  checkpoint starting: time
+2026-11-05 03:02:41.662 EST [77235] LOG:  checkpoint complete: wrote 4 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.409 s, sync=0.001 s, total=0.415 s; sync files=4, longest=0.001 s, average=0.001 s; distance=24 kB, estimate=2105 kB; lsn=0/1FB94A8, redo lsn=0/1FB9450
+2026-11-05 13:31:34.031 EST [77235] LOG:  checkpoint starting: time
+2026-11-05 13:31:34.139 EST [77235] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.103 s, sync=0.001 s, total=0.110 s; sync files=2, longest=0.001 s, average=0.001 s; distance=7 kB, estimate=1895 kB; lsn=0/1FBB418, redo lsn=0/1FBB3C0
+2026-11-05 23:59:08.129 EST [77235] LOG:  checkpoint starting: time
+2026-11-05 23:59:08.238 EST [77235] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.102 s, sync=0.001 s, total=0.110 s; sync files=2, longest=0.001 s, average=0.001 s; distance=4 kB, estimate=1706 kB; lsn=0/1FBC5C0, redo lsn=0/1FBC568
+2026-11-06 01:21:46.734 EST [77235] LOG:  checkpoint starting: time
+2026-11-06 01:21:46.843 EST [77235] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.103 s, sync=0.001 s, total=0.109 s; sync files=2, longest=0.001 s, average=0.001 s; distance=6 kB, estimate=1536 kB; lsn=0/1FBDDE8, redo lsn=0/1FBDD90
+2026-11-06 01:26:46.844 EST [77235] LOG:  checkpoint starting: time
+2026-11-06 01:26:47.160 EST [77235] LOG:  checkpoint complete: wrote 3 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.310 s, sync=0.001 s, total=0.316 s; sync files=3, longest=0.001 s, average=0.001 s; distance=23 kB, estimate=1385 kB; lsn=0/1FC3C30, redo lsn=0/1FC3BD8
+2026-11-06 03:36:54.555 EST [77235] LOG:  checkpoint starting: time
+2026-11-06 03:36:54.763 EST [77235] LOG:  checkpoint complete: wrote 2 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.204 s, sync=0.001 s, total=0.211 s; sync files=3, longest=0.001 s, average=0.001 s; distance=11 kB, estimate=1247 kB; lsn=0/1FC68B8, redo lsn=0/1FC6860
+2026-11-06 03:50:52.302 EST [46212] LOG:  could not receive data from client: Connection reset by peer
+2026-11-06 03:51:54.784 EST [77235] LOG:  checkpoint starting: time
+2026-11-06 03:51:55.705 EST [77235] LOG:  checkpoint complete: wrote 9 buffers (0.1%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.915 s, sync=0.002 s, total=0.921 s; sync files=6, longest=0.001 s, average=0.001 s; distance=59 kB, estimate=1128 kB; lsn=0/1FD5668, redo lsn=0/1FD5610
+2026-11-06 03:56:54.705 EST [77235] LOG:  checkpoint starting: time
+2026-11-06 03:56:54.809 EST [77235] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 0 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.102 s, sync=0.001 s, total=0.105 s; sync files=1, longest=0.001 s, average=0.001 s; distance=6 kB, estimate=1016 kB; lsn=0/1FD70D0, redo lsn=0/1FD7078
+2026-11-06 04:52:54.828 EST [52348] WARNING:  there is no transaction in progress
+2026-11-06 04:54:33.227 EST [77235] LOG:  checkpoint starting: time
+2026-11-06 04:54:37.405 EST [77235] LOG:  checkpoint complete: wrote 41 buffers (0.3%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 1 recycled; write=4.169 s, sync=0.003 s, total=4.179 s; sync files=24, longest=0.001 s, average=0.001 s; distance=243 kB, estimate=939 kB; lsn=0/2014020, redo lsn=0/2013FB0
+2026-11-06 04:59:33.406 EST [77235] LOG:  checkpoint starting: time
+2026-11-06 04:59:33.513 EST [77235] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.102 s, sync=0.001 s, total=0.108 s; sync files=2, longest=0.001 s, average=0.001 s; distance=4 kB, estimate=845 kB; lsn=0/20151B0, redo lsn=0/2015158
+2026-11-06 05:17:34.806 EST [77235] LOG:  checkpoint starting: time
+2026-11-06 05:17:34.913 EST [77235] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.103 s, sync=0.001 s, total=0.107 s; sync files=2, longest=0.001 s, average=0.001 s; distance=6 kB, estimate=761 kB; lsn=0/20169F0, redo lsn=0/2016998
+2026-11-06 05:22:34.913 EST [77235] LOG:  checkpoint starting: time
+2026-11-06 05:22:35.019 EST [77235] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.103 s, sync=0.001 s, total=0.107 s; sync files=2, longest=0.001 s, average=0.001 s; distance=7 kB, estimate=686 kB; lsn=0/2018958, redo lsn=0/2018900
+2026-11-06 05:32:34.051 EST [77235] LOG:  checkpoint starting: time
+2026-11-06 05:32:34.458 EST [77235] LOG:  checkpoint complete: wrote 4 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.406 s, sync=0.001 s, total=0.408 s; sync files=3, longest=0.001 s, average=0.001 s; distance=27 kB, estimate=620 kB; lsn=0/201F8A0, redo lsn=0/201F810
+2026-11-06 05:42:34.451 EST [77235] LOG:  checkpoint starting: time
+2026-11-06 05:42:58.977 EST [77235] LOG:  checkpoint complete: wrote 242 buffers (1.5%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=24.520 s, sync=0.003 s, total=24.527 s; sync files=26, longest=0.001 s, average=0.001 s; distance=1569 kB, estimate=1569 kB; lsn=0/21A9100, redo lsn=0/21A7E78
+2026-11-06 05:47:34.980 EST [77235] LOG:  checkpoint starting: time
+2026-11-06 05:47:35.394 EST [77235] LOG:  checkpoint complete: wrote 4 buffers (0.0%), wrote 0 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.409 s, sync=0.001 s, total=0.414 s; sync files=3, longest=0.001 s, average=0.001 s; distance=21 kB, estimate=1414 kB; lsn=0/21AD2E8, redo lsn=0/21AD290
+2026-11-07 05:12:49.477 EST [77235] LOG:  checkpoint starting: time
+2026-11-07 05:12:49.587 EST [77235] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 0 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.103 s, sync=0.001 s, total=0.111 s; sync files=1, longest=0.001 s, average=0.001 s; distance=7 kB, estimate=1274 kB; lsn=0/21AF280, redo lsn=0/21AF228

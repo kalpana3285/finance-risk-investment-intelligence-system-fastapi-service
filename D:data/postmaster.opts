@@ -1,0 +1,1 @@
+/opt/homebrew/Cellar/postgresql@18/18.4/bin/postgres "-D" "D:data" "-p" "9000"

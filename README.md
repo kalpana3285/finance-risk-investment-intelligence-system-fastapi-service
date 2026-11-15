@@ -24,7 +24,9 @@ directory so the local SQLite URL and `.env` file resolve predictably.
    pgvector index; it is not a migration mechanism for an existing schema.
    Production deployments should run reviewed migrations and set it to `false`.
 6. To process document ingestions, set `FRIIS_INGESTION_WORKER_ENABLED=true`.
-   The app registers the seven approved project PDFs at startup and processes
+   The PDFs are read from the repository's `Documents/` directory by default;
+   set `FRIIS_DOCUMENTS_ROOT` to override that location. The app registers the
+   seven approved project PDFs at startup and processes
    queued `documents` ingestion runs using the configured Azure OpenAI
    embedding deployment. The current schema requires 1536-dimensional vectors.
    PDF text and extracted table content are embedded; pages containing images
@@ -59,6 +61,17 @@ directory so the local SQLite URL and `.env` file resolve predictably.
    worker fails the query rather than persisting unvalidated output.
 8. Install the backend dependencies, then run `uvicorn main:app --reload`.
 
+Swagger UI at `/docs` can obtain an Auth0 access token using Authorization Code
+with PKCE. Set `FRIIS_AUTH0_SWAGGER_CLIENT_ID` to a public Auth0 SPA application's
+client ID; do not set a client secret. Swagger exchanges its one-time authorization
+code through the backend's `/auth/token` endpoint, which forwards only the code,
+PKCE verifier, and fixed API audience to Auth0. Add
+`http://localhost:8000/docs/oauth2-redirect` and the deployed backend's
+`/docs/oauth2-redirect` URL to that application's Allowed Callback URLs, and add
+the corresponding origins to Allowed Web Origins. In Swagger, select **Authorize**
+and sign in through Auth0. The flow requests the configured
+`FRIIS_AUTH0_API_AUDIENCE`; the API continues to validate the returned Auth0 token.
+
 ## Deploying the API to Vercel
 
 Create a second Vercel project for this repository; keep the frontend project
@@ -71,6 +84,7 @@ Add these environment variables to the Vercel project for each environment:
 
 - `DATABASE_URL_POOLED`: pooled PostgreSQL URL with `sslmode=require` and pgvector installed.
 - `FRIIS_AUTH0_DOMAIN` and `FRIIS_AUTH0_API_AUDIENCE`: the Auth0 tenant and API identifier.
+- `FRIIS_AUTH0_SWAGGER_CLIENT_ID`: public Auth0 SPA client ID for Swagger's PKCE login.
 - `FRIIS_CORS_ALLOW_ORIGINS`: comma-separated exact frontend origins, for example
   `https://project-3-finance-risk-investment-i.vercel.app`.
 - `FRIIS_AUTO_CREATE_SCHEMA=false`: apply reviewed database migrations separately.

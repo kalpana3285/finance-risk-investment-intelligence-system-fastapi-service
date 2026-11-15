@@ -18,6 +18,7 @@ ENV_KEYS = (
     "DB_CHANNELBINDING",
     "FRIIS_AUTH0_DOMAIN",
     "FRIIS_AUTH0_API_AUDIENCE",
+    "FRIIS_AUTH0_SWAGGER_CLIENT_ID",
     "FRIIS_CORS_ALLOW_ORIGINS",
     "FRIIS_AUTH0_ROLES_CLAIM",
     "FRIIS_AUTH0_PORTFOLIO_IDS_CLAIM",
@@ -25,6 +26,7 @@ ENV_KEYS = (
     "FRIIS_AUTH0_JWKS_CACHE_SECONDS",
     "FRIIS_AUTH0_TIMEOUT_SECONDS",
     "FRIIS_AUTO_CREATE_SCHEMA",
+    "FRIIS_DOCUMENTS_ROOT",
     "FRIIS_QUERY_WORKER_READY",
     "FRIIS_QUERY_WORKER_ENABLED",
     "FRIIS_INGESTION_WORKER_READY",
@@ -89,7 +91,7 @@ def test_runtime_settings_load_auth0_configuration_from_env_file(
 ) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text(
-        "FRIIS_DATABASE_URL=sqlite:///./test.db\nFRIIS_AUTH0_DOMAIN=tenant.example.auth0.com\nFRIIS_AUTH0_API_AUDIENCE=https://api.example.test\nFRIIS_CORS_ALLOW_ORIGINS=https://app.example.test/, https://preview.example.test\nFRIIS_AUTO_CREATE_SCHEMA=true"
+        "FRIIS_DATABASE_URL=sqlite:///./test.db\nFRIIS_AUTH0_DOMAIN=tenant.example.auth0.com\nFRIIS_AUTH0_API_AUDIENCE=https://api.example.test\nFRIIS_AUTH0_SWAGGER_CLIENT_ID=swagger-client-id\nFRIIS_CORS_ALLOW_ORIGINS=https://app.example.test/, https://preview.example.test\nFRIIS_AUTO_CREATE_SCHEMA=true"
     )
     before = {key: os.environ.get(key) for key in ENV_KEYS}
     for key in ENV_KEYS:
@@ -105,6 +107,7 @@ def test_runtime_settings_load_auth0_configuration_from_env_file(
     assert settings.database_url == "sqlite:///./test.db"
     assert settings.auth0_domain == "tenant.example.auth0.com"
     assert settings.auth0_api_audience == "https://api.example.test"
+    assert settings.auth0_swagger_client_id == "swagger-client-id"
     assert settings.auth0_roles_claim == f"{AUTH0_CLAIMS_NAMESPACE}/roles"
     assert settings.cors_allowed_origins == (
         "https://app.example.test",
@@ -112,6 +115,25 @@ def test_runtime_settings_load_auth0_configuration_from_env_file(
     )
     assert settings.auto_create_schema is True
     assert settings.query_worker_ready is False
+
+
+def test_runtime_resolves_documents_root_from_project_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env_file = tmp_path / "runtime.env"
+    env_file.write_text(
+        "FRIIS_DATABASE_URL=sqlite:///./test.db\n"
+        "FRIIS_AUTH0_DOMAIN=tenant.example.auth0.com\n"
+        "FRIIS_AUTH0_API_AUDIENCE=https://api.example.test\n"
+        "FRIIS_DOCUMENTS_ROOT=Documents/"
+    )
+    for key in ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    settings = RuntimeSettings.from_environment(env_file)
+
+    assert settings.documents_root == Path(__file__).resolve().parents[1] / "Documents"
 
 
 def test_runtime_settings_fail_when_required_values_are_missing(

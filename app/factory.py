@@ -26,6 +26,7 @@ from agents.tool_enabled_agent import create_finance_tool_agent
 from config.log_config import setup_logging
 from config.runtime import RuntimeSettings
 from routes.api import router
+from routes.auth import create_auth0_token_router
 from schemas import ErrorResponse
 from security.auth import Auth0Authenticator, Authenticator
 from services.api_service import APIService
@@ -61,6 +62,9 @@ def create_app(
     finance_agent: object | None = None,
     file_ingestion_processor: Callable[..., dict[str, object]] | None = None,
     cors_allowed_origins: tuple[str, ...] = (),
+    auth0_domain: str | None = None,
+    auth0_api_audience: str | None = None,
+    swagger_oauth_client_id: str | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
@@ -102,6 +106,17 @@ def create_app(
                 await synthesis_client.aclose()
             flush_langfuse()
 
+    swagger_oauth = None
+    if auth0_domain and auth0_api_audience and swagger_oauth_client_id:
+        normalized_domain = (
+            auth0_domain.strip().removeprefix("https://").removesuffix("/")
+        )
+        swagger_oauth = {
+            "clientId": swagger_oauth_client_id,
+            "usePkceWithAuthorizationCodeGrant": True,
+            "additionalQueryStringParams": {"audience": auth0_api_audience},
+        }
+
     app = FastAPI(
         title="FRIIS — Finance Risk & Investment Intelligence System API",
         summary="Evidence-grounded portfolio and financial risk research API.",
@@ -142,7 +157,27 @@ def create_app(
             },
         ],
         lifespan=lifespan,
+        swagger_ui_init_oauth=swagger_oauth,
     )
+    if swagger_oauth is not None:
+        original_openapi = app.openapi
+
+        def openapi_with_auth0_oauth() -> dict[str, object]:
+            schema = original_openapi()
+            security_schemes = schema["components"]["securitySchemes"]
+            security_schemes["HTTPBearer"] = {
+                "type": "oauth2",
+                "flows": {
+                    "authorizationCode": {
+                        "authorizationUrl": f"https://{normalized_domain}/authorize",
+                        "tokenUrl": "/auth/token",
+                        "scopes": {},
+                    }
+                },
+            }
+            return schema
+
+        app.openapi = openapi_with_auth0_oauth
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(cors_allowed_origins),
@@ -157,6 +192,14 @@ def create_app(
     app.state.finance_agent = finance_agent
     app.state.file_ingestion_processor = file_ingestion_processor
     app.include_router(router)
+    if swagger_oauth is not None:
+        app.include_router(
+            create_auth0_token_router(
+                domain=auth0_domain,
+                audience=auth0_api_audience,
+                client_id=swagger_oauth_client_id,
+            )
+        )
 
     @app.middleware("http")
     async def trace_http_flow(request: Request, call_next):
@@ -317,6 +360,9 @@ def create_runtime_app(
             authenticator,
             cors_allowed_origins=runtime.cors_allowed_origins,
             file_ingestion_processor=partial(process_and_store_file, engine=engine),
+            auth0_domain=runtime.auth0_domain,
+            auth0_api_audience=runtime.auth0_api_audience,
+            swagger_oauth_client_id=runtime.auth0_swagger_client_id,
         )
 
     embedder = AzureOpenAIEmbedder(
@@ -403,6 +449,9 @@ def create_runtime_app(
         synthesis_client=synthesis_client,
         finance_agent=finance_agent,
         file_ingestion_processor=partial(process_and_store_file, engine=engine),
+        auth0_domain=runtime.auth0_domain,
+        auth0_api_audience=runtime.auth0_api_audience,
+        swagger_oauth_client_id=runtime.auth0_swagger_client_id,
     )
 
 
