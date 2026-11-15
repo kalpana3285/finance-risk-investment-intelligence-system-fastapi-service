@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -83,7 +84,7 @@ class ContextFormatter(logging.Formatter):
 
 def setup_logging(level: int = logging.INFO) -> None:
     """
-    Configure application logging to stdout and the backend logger file.
+    Configure application logging to stdout and, outside Vercel, the log file.
     
     Args:
         level: Logging level (default: INFO)
@@ -93,12 +94,15 @@ def setup_logging(level: int = logging.INFO) -> None:
     )
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
-    file_handler = logging.FileHandler(LOG_FILE_PATH, encoding="utf-8")
-    file_handler.setFormatter(formatter)
+    handlers: list[logging.Handler] = [console_handler]
+    if os.getenv("VERCEL") != "1":
+        file_handler = logging.FileHandler(LOG_FILE_PATH, encoding="utf-8")
+        file_handler.setFormatter(formatter)
+        handlers.append(file_handler)
 
     logging.basicConfig(
         level=level,
-        handlers=[console_handler, file_handler],
+        handlers=handlers,
         force=True,
     )
 

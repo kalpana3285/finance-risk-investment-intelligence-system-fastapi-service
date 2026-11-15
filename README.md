@@ -128,8 +128,10 @@ state.
     and verify your organization's observability data-handling approval before
     enabling remote tracing.
 
-Application logs are written to stdout and appended to `logger.txt` in this
-backend directory. The admin document-upload endpoint logs request validation,
+Application logs are written to stdout and, outside Vercel, appended to
+`logger.txt` in this backend directory. Vercel's function filesystem is
+read-only, so deployed logs are available through the Vercel function logs. The
+admin document-upload endpoint logs request validation,
 upload size/type, pipeline start and completion statistics, failures, and
 temporary-file cleanup. Ingestion logs include the normalized destination table
 (`document_chunks`) and chunk counts. Document contents and credentials are not
