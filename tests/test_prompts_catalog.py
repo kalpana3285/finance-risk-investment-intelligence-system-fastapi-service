@@ -63,6 +63,7 @@ def test_catalog_loads_managed_chat_prompt_and_version(
         }
     ]
     assert prompt["version"] == 7
+    assert prompt["source"] == "langfuse"
     assert prompt["messages"] == [
         {"role": "system", "content": "Managed system prompt"},
         {"role": "user", "content": "{request_payload}"},
@@ -98,6 +99,7 @@ def test_catalog_uses_local_template_when_langfuse_is_unconfigured(
 
     assert prompt["version"] == 1
     assert prompt["name"] == "friis-finance-synthesis"
+    assert prompt["source"] == "local"
 
 
 def test_catalog_does_not_hide_managed_prompt_fetch_failure(

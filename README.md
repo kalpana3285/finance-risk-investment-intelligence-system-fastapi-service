@@ -134,10 +134,12 @@ state.
     prompt changes.
     Tracing is disabled when credentials are absent or
     `LANGFUSE_ENABLED=false`; FRIIS continues to run normally. Query processing creates a trace with
-    specialist, retrieval, embedding, and synthesis observations. Upload and
-    approved-source ingestion also create processing observations. Every trace
-    includes flow identifiers, selected portfolio scope, step counts, model
-    names, and token usage when the provider returns it. User prompts, model
+    specialist, retrieval, embedding, and synthesis observations. The synthesis
+    observation records prompt name, version, label, and source (`langfuse` or
+    `local`) without capturing prompt content. Upload and approved-source
+    ingestion also create processing observations. Every trace includes flow
+    identifiers, selected portfolio scope, step counts, model names, and token
+    usage when the provider returns it. User prompts, model
     answers, retrieved excerpts, portfolio records, uploaded filenames, and
     document text are not sent to Langfuse. Keep Langfuse credentials in `.env`
     and verify your organization's observability data-handling approval before

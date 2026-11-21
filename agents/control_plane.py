@@ -927,7 +927,15 @@ class AzureSynthesisAgent:
                 name="evidence-constrained-synthesis",
                 as_type="generation",
                 input={"evidence_count": len(evidence), "content_captured": False},
-                metadata={"query_id": context.query_id},
+                metadata={
+                    "query_id": context.query_id,
+                    "prompt_name": _SYNTHESIS_PROMPT_DEFINITION["name"],
+                    "prompt_version": _SYNTHESIS_PROMPT_DEFINITION["version"],
+                    "prompt_label": next(
+                        iter(_SYNTHESIS_PROMPT_DEFINITION.get("labels", [])), None
+                    ),
+                    "prompt_source": _SYNTHESIS_PROMPT_DEFINITION["source"],
+                },
                 model=self.deployment,
             ) as span:
                 response = await asyncio.wait_for(
@@ -1034,6 +1042,9 @@ class AzureSynthesisAgent:
                     ],
                     "evaluator_prompt_version": _QUERY_RESULT_EVALUATOR_PROMPT_DEFINITION[
                         "version"
+                    ],
+                    "evaluator_prompt_source": _QUERY_RESULT_EVALUATOR_PROMPT_DEFINITION[
+                        "source"
                     ],
                 },
                 model=self.evaluator_deployment,

@@ -262,10 +262,11 @@ def get_prompt(key: str) -> dict[str, Any]:
         label=next(iter(local_prompt.get("labels", [])), None),
     )
     if remote_prompt is None:
-        return local_prompt
+        return {**local_prompt, "source": "local"}
 
     managed_prompt = {
         **local_prompt,
+        "source": "langfuse",
         "name": remote_prompt.name,
         "version": remote_prompt.version,
         "labels": list(remote_prompt.labels),
@@ -284,7 +285,7 @@ def get_prompt(key: str) -> dict[str, Any]:
                     ),
                 },
             )
-            return local_prompt
+            return {**local_prompt, "source": "local"}
         managed_prompt["messages"] = messages
     else:
         compiled_prompt = remote_prompt.get_langchain_prompt()
@@ -300,7 +301,7 @@ def get_prompt(key: str) -> dict[str, Any]:
                     ),
                 },
             )
-            return local_prompt
+            return {**local_prompt, "source": "local"}
         managed_prompt["template"] = compiled_prompt
     return managed_prompt
 

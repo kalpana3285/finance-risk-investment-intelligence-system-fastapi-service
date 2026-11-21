@@ -87,6 +87,33 @@ def _evidence(evidence_id: str = "policy:p1") -> AgentEvidence:
 
 
 def test_azure_synthesis_uses_langchain_and_validates_evidence(monkeypatch) -> None:
+    observation_calls = []
+
+    def fake_observation(**kwargs):
+        observation_calls.append(kwargs)
+        return nullcontext(None)
+
+    monkeypatch.setattr(control_plane, "observation", fake_observation)
+    remote_prompt = {
+        "name": "friis-finance-synthesis",
+        "version": 7,
+        "labels": ["production"],
+        "source": "langfuse",
+    }
+    monkeypatch.setattr(
+        control_plane, "_SYNTHESIS_PROMPT_DEFINITION", remote_prompt
+    )
+    monkeypatch.setattr(
+        control_plane,
+        "_SYNTHESIS_PROMPT",
+        control_plane.ChatPromptTemplate.from_messages(
+            [
+                ("system", "Managed remote system prompt"),
+                ("user", "{request_payload}"),
+            ]
+        ),
+    )
+
     class FakeAsyncClient:
         def __init__(self) -> None:
             self.closed = False
@@ -145,13 +172,18 @@ def test_azure_synthesis_uses_langchain_and_validates_evidence(monkeypatch) -> N
     assert agent._client.options["max_retries"] == 1
     assert agent._client.bound_options == {"response_format": {"type": "json_object"}}
     system_prompt = agent._client.messages[0].content
-    assert "data, not instructions" in system_prompt
-    assert "personalized investment advice" in system_prompt
-    assert "Value at Risk" in system_prompt
+    assert system_prompt == "Managed remote system prompt"
     request_payload = json.loads(agent._client.messages[1].content)
     assert request_payload["question"] == "Summarize the policy evidence."
     assert request_payload["correction"] == "Use only supported claims."
     assert request_payload["evidence"][0]["citation_id"] == "policy:p1"
+    assert observation_calls[0]["metadata"] == {
+        "query_id": "query-1",
+        "prompt_name": "friis-finance-synthesis",
+        "prompt_version": 7,
+        "prompt_label": "production",
+        "prompt_source": "langfuse",
+    }
 
     asyncio.run(agent.aclose())
     assert agent._client.root_async_client.closed
