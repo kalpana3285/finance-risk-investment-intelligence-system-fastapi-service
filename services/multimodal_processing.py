@@ -15,7 +15,26 @@ from prompts.catalog import get_prompt
 logger = logging.getLogger(__name__)
 
 VECTOR_DRAWING_THRESHOLD = 8
-VISUAL_CAPTION_PROMPT = get_prompt("pdf-visual-caption")["template"]
+VISUAL_CAPTION_PROMPT_CONFIG = get_prompt("pdf-visual-caption")
+VISUAL_CAPTION_PROMPT = VISUAL_CAPTION_PROMPT_CONFIG["template"]
+
+
+def visual_processing_profile() -> str:
+    load_dotenv(
+        dotenv_path=Path(__file__).resolve().parents[1] / ".env",
+        override=False,
+    )
+    deployment = (
+        os.getenv("FRIIS_VISION_DEPLOYMENT")
+        or os.getenv("AZURE_OPENAI_LLM_DEPLOYMENT")
+        or "unconfigured"
+    )
+    api_version = os.getenv("AZURE_OPENAI_API_VERSION") or "unconfigured"
+    return (
+        f"{deployment}:{api_version}:"
+        f"{VISUAL_CAPTION_PROMPT_CONFIG['name']}-v"
+        f"{VISUAL_CAPTION_PROMPT_CONFIG['version']}"
+    )
 
 
 class MultimodalProcessingError(RuntimeError):

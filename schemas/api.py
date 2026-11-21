@@ -236,8 +236,9 @@ class IngestionSubmissionResponse(APIModel):
 
 
 class FileIngestionResponse(APIModel):
-    model_config = ConfigDict(json_schema_extra={"examples": [{"status": "success", "filename": "risk-policy.pdf", "file_type": "pdf", "total_chunks": 31, "average_chunk_length": 842.5, "min_chunk_length": 210, "max_chunk_length": 1200, "table_nodes": 0, "image_nodes": 0, "processing_time_seconds": 4.2, "collection_name": "document_chunks", "chunk_ids": ["chunk-001"], "source_documents": 1}]})
+    model_config = ConfigDict(json_schema_extra={"examples": [{"status": "success", "ingestion_id": "b16a4d16-0b3c-4587-8f02-d893b816d57a", "filename": "risk-policy.pdf", "file_type": "pdf", "total_chunks": 31, "average_chunk_length": 842.5, "min_chunk_length": 210, "max_chunk_length": 1200, "table_nodes": 0, "image_nodes": 0, "processing_time_seconds": 4.2, "collection_name": "document_chunks", "chunk_ids": ["chunk-001"], "source_documents": 1}]})
     status: Literal["success"]
+    ingestion_id: ResourceId
     filename: str = Field(min_length=1, max_length=255)
     file_type: str
     total_chunks: int = Field(ge=1)

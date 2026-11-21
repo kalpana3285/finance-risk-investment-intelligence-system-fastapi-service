@@ -360,6 +360,14 @@ async def test_ingestion_queue_requires_approved_source_and_is_owner_scoped(serv
                 source_ids=["arbitrary_table"],
             ),
         )
+    with pytest.raises(InvalidIngestionRequest, match="not available"):
+        await service.start_ingestion(
+            OPERATOR,
+            IngestionRequest(
+                source_type=IngestionSourceType.STRUCTURED_DATA,
+                source_ids=["portfolio_holdings"],
+            ),
+        )
 
 
 @pytest.mark.asyncio

@@ -38,6 +38,7 @@ class AzureOpenAIEmbedder:
                 f"{EMBEDDING_DIMENSIONS}-dimensional embeddings"
             )
         self.deployment = deployment
+        self.api_version = api_version
         self.dimensions = dimensions
         self._client = AsyncAzureOpenAI(
             azure_endpoint=endpoint,

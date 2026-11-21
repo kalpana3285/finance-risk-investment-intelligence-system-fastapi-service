@@ -25,12 +25,19 @@ from services.document_ingestion import (
     _extract_pdf_pages,
     register_project_pdf_sources,
 )
+from services.ingestion_utils import remove_repeated_page_marginalia
 
 
 class FakeEmbedder:
     dimensions = 1536
+    deployment = "test-embedding-deployment"
+    api_version = "2024-02-01"
+
+    def __init__(self) -> None:
+        self.requests: list[list[str]] = []
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
+        self.requests.append(texts)
         return [[0.25] * self.dimensions for _ in texts]
 
 
@@ -54,9 +61,41 @@ def test_chunk_pages_keeps_page_metadata_and_overlap() -> None:
     )
 
     assert chunks
-    assert all(len(text) <= 12 for text, _ in chunks)
-    assert {page for _, page in chunks} == {3, 4}
-    assert any("delta" in text for text, _ in chunks)
+    assert all(len(text) <= 12 for text, _, _ in chunks)
+    assert {page for _, page, _ in chunks} == {3, 4}
+    assert any("delta" in text for text, _, _ in chunks)
+
+
+def test_chunk_pages_propagates_section_hierarchy_to_each_chunk() -> None:
+    chunks = _chunk_pages(
+        [
+            ("# Risk Policy\nOverview content.", 1),
+            ("## Exposure Limits\nLimit content.", 2),
+        ],
+        chunk_size=20,
+        chunk_overlap=0,
+    )
+
+    assert {section for _, _, section in chunks} == {
+        "Risk Policy",
+        "Risk Policy > Exposure Limits",
+    }
+
+
+def test_repeated_page_headers_and_footers_are_removed_without_losing_body_text():
+    pages = [
+        "Investment Policy\nFirst page body\nPage 1\nConfidential footer",
+        "Investment Policy\nSecond page body\nPage 2\nConfidential footer",
+        "Investment Policy\nThird page body\nPage 3\nConfidential footer",
+    ]
+
+    cleaned = remove_repeated_page_marginalia(pages)
+
+    assert cleaned == [
+        "First page body",
+        "Second page body",
+        "Third page body",
+    ]
 
 
 def test_extract_pdf_pages_uses_langchain_pdf_loader(
@@ -197,6 +236,91 @@ async def test_worker_stores_versioned_chunks_and_is_idempotent(
     assert len(items) == 2
     assert all(item["status"] == "succeeded" for item in items)
     assert all(run["status"] == IngestionStatus.SUCCEEDED.value for run in runs)
+
+
+@pytest.mark.asyncio
+async def test_worker_reuses_embeddings_for_unchanged_chunks_on_new_version(
+    engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    documents_root = tmp_path / "Documents"
+    documents_root.mkdir()
+    source_path = documents_root / "approved.pdf"
+    source_path.write_bytes(b"version one")
+    now = datetime.now(UTC)
+    with engine.begin() as connection:
+        connection.execute(
+            insert(source_documents).values(
+                document_id="document-incremental",
+                source_key="project-pdf-01",
+                title="Incremental source",
+                source_type="policy",
+                source_uri="Documents/approved.pdf",
+                access_classification="internal",
+                approved=True,
+                enabled=True,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    extracted_page = ["# Shared\nStable content."]
+    monkeypatch.setattr(
+        "services.document_ingestion._extract_pdf_pages",
+        lambda _path, _source_id: [(extracted_page[0], 1)],
+    )
+    monkeypatch.setattr(
+        "services.document_ingestion.extract_pdf_supplemental_documents",
+        lambda _path: [],
+    )
+    embedder = FakeEmbedder()
+    worker = DocumentIngestionWorker(
+        engine,
+        embedder,
+        documents_root,
+        chunk_size=1000,
+        chunk_overlap=0,
+    )
+
+    for source_version in ("first", "second"):
+        with engine.begin() as connection:
+            connection.execute(
+                insert(ingestion_runs).values(
+                    ingestion_id=str(uuid4()),
+                    run_type="incremental",
+                    status="queued",
+                    initiated_by="operator-1",
+                    pipeline_version="test",
+                    source_type="documents",
+                    source_ids=["project-pdf-01"],
+                    validation_errors=[],
+                    created_at=now,
+                )
+            )
+        if source_version == "second":
+            source_path.write_bytes(b"version two")
+            extracted_page[0] = (
+                "# Shared\nStable content.\n# New Section\nAdded content."
+            )
+        summary = await worker.run_once()
+        assert summary is not None
+        assert summary.status == IngestionStatus.SUCCEEDED
+
+    assert embedder.requests == [
+        ["# Shared\nStable content."],
+        ["# New Section\nAdded content."],
+    ]
+    with engine.connect() as connection:
+        versions = connection.execute(select(document_versions)).mappings().all()
+        chunks = connection.execute(select(document_chunks)).mappings().all()
+    assert len(versions) == 2
+    assert len(chunks) == 3
+    assert {chunk["metadata"]["embedding_deployment"] for chunk in chunks} == {
+        "test-embedding-deployment"
+    }
+    assert {chunk["metadata"]["section_path"] for chunk in chunks} == {
+        "Shared",
+        "New Section",
+    }
 
 
 def test_worker_rejects_source_paths_outside_documents_root(

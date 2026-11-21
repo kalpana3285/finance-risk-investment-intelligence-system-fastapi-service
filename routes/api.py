@@ -7,6 +7,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path as FilePath
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import (
     APIRouter,
@@ -33,6 +34,7 @@ from schemas import (
     FileIngestionResponse,
     HealthResponse,
     HealthStatus,
+    IngestionDetailResponse,
     PortfolioDetailResponse,
     PortfolioListQuery,
     PortfolioListResponse,
@@ -412,7 +414,7 @@ async def update_escalation(
     },
 )
 async def start_ingestion(
-    _principal: OperatorPrincipal,
+    principal: OperatorPrincipal,
     request: Request,
     file: Annotated[UploadFile, File(...)],
     chunk_size: Annotated[int, Query(ge=1, le=8000)] = 1000,
@@ -420,7 +422,6 @@ async def start_ingestion(
 ) -> FileIngestionResponse:
     """Validate, chunk, embed, and store an uploaded knowledge document."""
     request_started = time.perf_counter()
-    del _principal
     original_filename = (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1]
     logger.info(
         "Document ingestion request received",
@@ -519,6 +520,7 @@ async def start_ingestion(
             "max_upload_size_bytes": MAX_UPLOAD_SIZE,
         },
     )
+    ingestion_id = str(uuid4())
     temp_path: FilePath | None = None
     try:
         logger.info(
@@ -533,11 +535,13 @@ async def start_ingestion(
             "Uploaded document staged; starting ingestion pipeline",
             extra={
                 "event": "document_ingestion.pipeline_started",
+                "ingestion_id": ingestion_id,
                 "uploaded_filename": original_filename,
                 "upload_size_bytes": len(content),
                 "file_type": suffix.lstrip("."),
                 "chunk_size": chunk_size,
                 "chunk_overlap": chunk_overlap,
+                "ingestion_id": ingestion_id,
                 "storage_table": DOCUMENT_CHUNKS_TABLE,
             },
         )
@@ -563,10 +567,14 @@ async def start_ingestion(
                 chunk_size,
                 chunk_overlap,
                 filename=original_filename,
+                owner_subject=principal.subject,
+                ingestion_id=ingestion_id,
             )
+            result["ingestion_id"] = ingestion_id
             if trace is not None:
                 trace.update(
                     output={
+                        "ingestion_id": ingestion_id,
                         "status": result.get("status"),
                         "total_chunks": result.get("total_chunks"),
                         "source_documents": result.get("source_documents"),
@@ -578,6 +586,7 @@ async def start_ingestion(
             "Document ingestion pipeline completed",
             extra={
                 "event": "document_ingestion.completed",
+                "ingestion_id": response.ingestion_id,
                 "uploaded_filename": original_filename,
                 "file_type": response.file_type,
                 "source_documents": response.source_documents,
@@ -624,6 +633,7 @@ async def start_ingestion(
             "Uploaded document processing failed",
             extra={
                 "event": "document_ingestion.failed",
+                "ingestion_id": ingestion_id,
                 "uploaded_filename": original_filename,
                 "error_type": type(exc).__name__,
                 "storage_table": DOCUMENT_CHUNKS_TABLE,
@@ -655,6 +665,33 @@ async def start_ingestion(
                         "uploaded_filename": original_filename,
                     },
                 )
+
+
+@router.get(
+    "/api/v1/admin/ingestions/{ingestion_id}",
+    response_model=IngestionDetailResponse,
+    tags=["Knowledge operations"],
+    summary="Get document ingestion status",
+    description=(
+        "Returns the durable status of a direct document upload. Only the "
+        "operator who submitted the upload can access it."
+    ),
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+async def get_direct_ingestion(
+    ingestion_id: Annotated[str, Path(min_length=1, max_length=128)],
+    principal: OperatorPrincipal,
+    service: Annotated[APIService, Depends(_get_service)],
+) -> IngestionDetailResponse:
+    """Retrieve a direct upload's persisted ingestion outcome."""
+    result = await service.get_ingestion(principal, ingestion_id)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ingestion not found.",
+        )
+    return result
+
 
 @router.get(
     "/health",

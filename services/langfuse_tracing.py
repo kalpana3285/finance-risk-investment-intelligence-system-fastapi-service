@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import contextmanager, nullcontext
-from typing import Any, Iterator
+from pathlib import Path
+from typing import Any, Iterator, Literal, Mapping
 
 logger = logging.getLogger(__name__)
 _client: Any | None = None
@@ -94,6 +95,80 @@ def is_tracing_enabled() -> bool:
     return _get_client() is not None
 
 
+def fetch_prompt(
+    *,
+    name: str,
+    prompt_type: Literal["chat", "text"],
+    label: str | None,
+) -> Any | None:
+    """Fetch a managed prompt when Langfuse is configured."""
+    from dotenv import load_dotenv
+
+    load_dotenv(
+        dotenv_path=Path(__file__).resolve().parents[1] / ".env",
+        override=False,
+    )
+    enabled = os.getenv("LANGFUSE_ENABLED", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    has_public_key = bool(os.getenv("LANGFUSE_PUBLIC_KEY"))
+    has_secret_key = bool(os.getenv("LANGFUSE_SECRET_KEY"))
+    if not enabled:
+        return None
+    if has_public_key != has_secret_key:
+        raise RuntimeError(
+            "Both LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are required "
+            "to load managed prompts."
+        )
+    if not has_public_key:
+        return None
+
+    client = _get_client()
+    if client is None:
+        raise RuntimeError("Langfuse is configured but its client is unavailable.")
+    try:
+        prompt = client.get_prompt(
+            name,
+            type=prompt_type,
+            label=label,
+        )
+    except Exception as exc:
+        if getattr(exc, "status_code", None) == 404:
+            logger.warning(
+                "Langfuse prompt was not found; the local catalog will be used",
+                extra={
+                    "prompt_name": name,
+                    "prompt_type": prompt_type,
+                    "prompt_label": label,
+                },
+            )
+            return None
+        logger.error(
+            "Langfuse prompt fetch failed",
+            extra={
+                "prompt_name": name,
+                "prompt_type": prompt_type,
+                "error_type": type(exc).__name__,
+            },
+        )
+        raise RuntimeError(f"Unable to fetch Langfuse prompt '{name}'.") from exc
+    if getattr(prompt, "is_fallback", False):
+        raise RuntimeError(f"Langfuse returned a fallback for prompt '{name}'.")
+    logger.info(
+        "Loaded managed Langfuse prompt",
+        extra={
+            "prompt_name": prompt.name,
+            "prompt_version": prompt.version,
+            "prompt_type": prompt_type,
+            "prompt_label": label,
+        },
+    )
+    return prompt
+
+
 @contextmanager
 def observation(
     *,
@@ -158,6 +233,36 @@ def trace_attributes(
         context = nullcontext()
     with _safe_context(context, name="trace-attributes"):
         yield
+
+
+def record_scores(
+    *,
+    trace_id: str,
+    scores: Mapping[str, float],
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Attach numeric evaluation scores without affecting application results."""
+    client = _get_client()
+    if client is None:
+        return
+
+    for name, value in scores.items():
+        try:
+            client.create_score(
+                name=name,
+                value=float(value),
+                trace_id=trace_id,
+                data_type="NUMERIC",
+                metadata=metadata or {},
+            )
+        except Exception as exc:
+            logger.warning(
+                "Langfuse score creation failed",
+                extra={
+                    "score_name": name,
+                    "error_type": type(exc).__name__,
+                },
+            )
 
 
 def flush() -> None:

@@ -5,8 +5,16 @@ from typing import Any
 
 import pytest
 from langchain_core.documents import Document
+from sqlalchemy import create_engine, select
+from sqlalchemy.pool import StaticPool
 
 from services import file_ingestion
+from services.database import (
+    ingestion_run_items,
+    ingestion_runs,
+    metadata,
+    source_documents,
+)
 
 
 def test_process_and_store_file_runs_langchain_pipeline(
@@ -90,6 +98,89 @@ def test_process_and_store_file_runs_langchain_pipeline(
     assert all(
         len(chunk.page_content) <= 16 for chunk in captured["documents"]
     )
+    assert {
+        chunk.metadata["embedding_deployment"] for chunk in captured["documents"]
+    } == {"embeddings"}
+    assert {
+        chunk.metadata["ingestion_pipeline_version"]
+        for chunk in captured["documents"]
+    } == {"friis-upload-v3"}
+
+
+def test_uploaded_sources_record_the_uploader_and_shared_internal_policy() -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    metadata.create_all(engine)
+    try:
+        document_id, _ = file_ingestion._register_uploaded_version(
+            engine,
+            source_key="uploaded-test",
+            filename="risk-policy.pdf",
+            file_type="pdf",
+            content_digest="a" * 64,
+            owner_subject="operator-1",
+        )
+        with engine.connect() as connection:
+            row = connection.execute(
+                select(source_documents).where(
+                    source_documents.c.document_id == document_id
+                )
+            ).mappings().one()
+        assert row["owner"] == "operator-1"
+        assert row["access_classification"] == "internal"
+        assert row["approved"] is True
+        assert row["enabled"] is True
+    finally:
+        engine.dispose()
+
+
+def test_direct_upload_run_records_terminal_success_and_counts() -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    metadata.create_all(engine)
+    try:
+        _, version_id = file_ingestion._register_uploaded_version(
+            engine,
+            source_key="uploaded-run-test",
+            filename="risk-policy.txt",
+            file_type="text",
+            content_digest="b" * 64,
+            owner_subject="operator-1",
+        )
+        file_ingestion._start_upload_run(
+            engine,
+            "ingestion-run-test",
+            "uploaded-run-test",
+            version_id,
+            "operator-1",
+        )
+        file_ingestion._finish_upload_run(engine, "ingestion-run-test", 3)
+
+        with engine.connect() as connection:
+            run = connection.execute(
+                select(ingestion_runs).where(
+                    ingestion_runs.c.ingestion_id == "ingestion-run-test"
+                )
+            ).mappings().one()
+            item = connection.execute(
+                select(ingestion_run_items).where(
+                    ingestion_run_items.c.ingestion_id == "ingestion-run-test"
+                )
+            ).mappings().one()
+        assert run["initiated_by"] == "operator-1"
+        assert run["source_ids"] == ["uploaded-run-test"]
+        assert run["status"] == "succeeded"
+        assert item["status"] == "succeeded"
+        assert item["chunks_created"] == 3
+        assert item["chunks_indexed"] == 3
+    finally:
+        engine.dispose()
 
 
 def test_process_and_store_pdf_indexes_tables_and_visual_captions(

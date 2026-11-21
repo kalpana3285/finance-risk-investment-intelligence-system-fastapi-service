@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -13,11 +13,19 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from agents.control_plane import (
     ControlPlaneError,
+    EscalationPacket,
+    OrchestrationResult,
     QueryContext,
+    QueryResultQualityScores,
     SupervisorAgent,
     WorkflowEventSink,
 )
-from schemas import EscalationStatus, QueryFailure, QueryStatus
+from handoff.handoff_service import (
+    evaluate_confidence_value,
+    evaluate_score,
+    generate_handoff_reference_id,
+)
+from schemas import EscalationStatus, HandoffEvidence, QueryFailure, QueryStatus
 from services.database import (
     escalations,
     query_requests,
@@ -27,10 +35,19 @@ from services.guardrails import (
     PII_REDACTION_LIMITATION,
     GuardrailsValidator,
 )
-from services.langfuse_tracing import observation, trace_attributes
+from services.langfuse_tracing import (
+    is_tracing_enabled,
+    observation,
+    record_scores,
+    trace_attributes,
+)
 
 logger = logging.getLogger(__name__)
 PROCESSING_STALE_SECONDS = 300
+QueryResultEvaluator = Callable[
+    [str, str, OrchestrationResult], Awaitable[QueryResultQualityScores]
+]
+HandoffEmailSender = Callable[[dict[str, Any]], None]
 
 
 class QueryWorker:
@@ -43,6 +60,8 @@ class QueryWorker:
         *,
         poll_seconds: float = 2.0,
         guardrails_validator: GuardrailsValidator | None = None,
+        result_evaluator: QueryResultEvaluator | None = None,
+        handoff_email_sender: HandoffEmailSender | None = None,
     ) -> None:
         if poll_seconds <= 0:
             raise ValueError("Worker polling interval must be positive")
@@ -50,6 +69,8 @@ class QueryWorker:
         self.supervisor_factory = supervisor_factory
         self.poll_seconds = poll_seconds
         self.guardrails_validator = guardrails_validator or GuardrailsValidator()
+        self.result_evaluator = result_evaluator
+        self.handoff_email_sender = handoff_email_sender
         self._stop = asyncio.Event()
 
     def stop(self) -> None:
@@ -142,42 +163,82 @@ class QueryWorker:
                     trace_context=trace_context,
                 ) as trace:
                     result = await self.supervisor_factory(event_sink).run(context)
+                    result, pii_detected = self.guardrails_validator.sanitize_result(
+                        result
+                    )
+                    if result.escalation is not None:
+                        question_decision = self.guardrails_validator.validate_output(
+                            context.question
+                        )
+                        if question_decision.pii_detected:
+                            safe_query = {
+                                **query,
+                                "question": question_decision.sanitized_text,
+                            }
+                            if PII_REDACTION_LIMITATION not in result.limitations:
+                                result = result.model_copy(
+                                    update={
+                                        "limitations": result.limitations
+                                        + (PII_REDACTION_LIMITATION,)
+                                    }
+                                )
+                            pii_detected = True
+                    if pii_detected:
+                        logger.info(
+                            "Sensitive personal information was redacted from query output",
+                            extra={"query_id": query["query_id"]},
+                        )
+                    quality_scores = await self._evaluate_result_scores(
+                        query_id=query["query_id"],
+                        trace_id=(trace_context or {}).get("trace_id"),
+                        question=context.question,
+                        result=result,
+                    )
+                    result, handoff_reason, quality_threshold_failed = (
+                        self._apply_handoff_thresholds(
+                            question=context.question,
+                            result=result,
+                            quality_scores=quality_scores,
+                        )
+                    )
+                    if quality_threshold_failed:
+                        question_decision = self.guardrails_validator.validate_output(
+                            context.question
+                        )
+                        safe_query = {
+                            **query,
+                            "question": question_decision.sanitized_text,
+                        }
+                        if question_decision.pii_detected:
+                            pii_detected = True
+                            if PII_REDACTION_LIMITATION not in result.limitations:
+                                result = result.model_copy(
+                                    update={
+                                        "limitations": result.limitations
+                                        + (PII_REDACTION_LIMITATION,)
+                                    }
+                                )
+                        if pii_detected:
+                            logger.info(
+                                "Sensitive personal information was redacted from query output",
+                                extra={"query_id": query["query_id"]},
+                            )
                     if trace is not None:
+                        trace_output: dict[str, Any] = {
+                            "status": result.status.value,
+                            "citation_count": len(result.citations),
+                            "limitation_count": len(result.limitations),
+                            "requires_human_review": result.escalation is not None,
+                        }
+                        if quality_scores is not None:
+                            trace_output["quality_scores"] = quality_scores
                         trace.update(
-                            output={
-                                "status": result.status.value,
-                                "citation_count": len(result.citations),
-                                "limitation_count": len(result.limitations),
-                                "requires_human_review": result.escalation is not None,
-                            },
+                            output=trace_output,
                             metadata={
                                 "query_id": query["query_id"],
                                 "portfolio_id": query.get("portfolio_id"),
                             },
                         )
-            result, pii_detected = self.guardrails_validator.sanitize_result(result)
-            if result.escalation is not None:
-                question_decision = self.guardrails_validator.validate_output(
-                    context.question
-                )
-                if question_decision.pii_detected:
-                    safe_query = {
-                        **query,
-                        "question": question_decision.sanitized_text,
-                    }
-                    if PII_REDACTION_LIMITATION not in result.limitations:
-                        result = result.model_copy(
-                            update={
-                                "limitations": result.limitations
-                                + (PII_REDACTION_LIMITATION,)
-                            }
-                        )
-                    pii_detected = True
-            if pii_detected:
-                logger.info(
-                    "Sensitive personal information was redacted from query output",
-                    extra={"query_id": query["query_id"]},
-                )
         except ControlPlaneError:
             logger.exception(
                 "Query control plane failed",
@@ -216,7 +277,208 @@ class QueryWorker:
             },
         )
         await asyncio.to_thread(self._persist_result, safe_query, result)
+        if handoff_reason is not None:
+            if self.handoff_email_sender is None:
+                logger.warning(
+                    "Human handoff email sender is not configured",
+                    extra={"query_id": query["query_id"]},
+                )
+            else:
+                try:
+                    await asyncio.to_thread(
+                        self.handoff_email_sender,
+                        self._handoff_email_context(
+                            query_id=query["query_id"],
+                            trace_id=(trace_context or {}).get(
+                                "trace_id", query["query_id"]
+                            ),
+                            handoff_reason=handoff_reason,
+                            quality_scores=quality_scores,
+                            high_priority=quality_threshold_failed,
+                        ),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Human handoff email could not be sent",
+                        extra={
+                            "query_id": query["query_id"],
+                            "error_type": type(exc).__name__,
+                        },
+                    )
         return True
+
+    async def _evaluate_result_scores(
+        self,
+        *,
+        query_id: str,
+        trace_id: str | None,
+        question: str,
+        result: OrchestrationResult,
+    ) -> dict[str, float] | None:
+        if (
+            self.result_evaluator is None
+            or not (result.answer or result.clarification_question or result.escalation)
+        ):
+            return None
+
+        try:
+            safe_question = self.guardrails_validator.validate_output(
+                question
+            ).sanitized_text
+            scores = await self.result_evaluator(query_id, safe_question, result)
+        except Exception as exc:
+            logger.warning(
+                "Query result quality evaluation failed",
+                extra={
+                    "query_id": query_id,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            return None
+
+        score_values = scores.model_dump()
+        if trace_id is not None and is_tracing_enabled():
+            record_scores(
+                trace_id=trace_id,
+                scores=score_values,
+                metadata={
+                    "query_id": query_id,
+                    "score_scale": "0-1",
+                    "score_source": "runtime_answer_quality",
+                },
+            )
+        return score_values
+
+    @staticmethod
+    def _apply_handoff_thresholds(
+        *,
+        question: str,
+        result: OrchestrationResult,
+        quality_scores: dict[str, float] | None,
+    ) -> tuple[OrchestrationResult, str | None, bool]:
+        threshold_reasons: list[str] = []
+        if quality_scores is not None:
+            has_evidence = bool(
+                result.citations
+                or (
+                    result.escalation is not None
+                    and result.escalation.evidence
+                )
+            )
+            score_decision = evaluate_score(
+                faithfulness=quality_scores["faithfulness"],
+                relevance=quality_scores["answer_relevance"],
+                user_question=question,
+                no_chunks=not has_evidence,
+            )
+            if score_decision["trigger"]:
+                threshold_reasons.append(score_decision["reason"])
+            confidence_decision = evaluate_confidence_value(
+                quality_scores["confidence"]
+            )
+            if confidence_decision["trigger"]:
+                threshold_reasons.append(confidence_decision["reason"])
+
+        if result.escalation is not None:
+            reasons = [result.escalation.reason, *threshold_reasons]
+            if threshold_reasons:
+                result = result.model_copy(
+                    update={
+                        "answer": None,
+                        "clarification_question": None,
+                        "escalation": result.escalation.model_copy(
+                            update={"reason": "; ".join(dict.fromkeys(reasons))}
+                        ),
+                    }
+                )
+            email_reason = (
+                "; ".join(dict.fromkeys(threshold_reasons))
+                if threshold_reasons
+                else "Existing result requires human review"
+            )
+            return result, email_reason, bool(threshold_reasons)
+
+        if not threshold_reasons:
+            return result, None, False
+
+        evidence = tuple(
+            HandoffEvidence(
+                source_id=citation.source_id,
+                source_title=citation.source_title,
+                source_version=citation.source_version,
+                excerpt=citation.excerpt,
+                page_number=citation.page_number,
+                record_reference=citation.record_reference,
+            )
+            for citation in result.citations
+        )
+        reason = "; ".join(dict.fromkeys(threshold_reasons))
+        escalation = EscalationPacket(
+            reason=reason,
+            evidence=evidence,
+            attempted_steps=("query_result_quality_evaluation",),
+            data_gaps=(),
+            requested_review="Review the query and its cited evidence before responding.",
+        )
+        limitation = "Automated quality thresholds were not met; human review is required."
+        return (
+            result.model_copy(
+                update={
+                    "status": QueryStatus.ESCALATED,
+                    "answer": None,
+                    "clarification_question": None,
+                    "escalation": escalation,
+                    "limitations": result.limitations
+                    if limitation in result.limitations
+                    else result.limitations + (limitation,),
+                }
+            ),
+            reason,
+            True,
+        )
+
+    @staticmethod
+    def _handoff_email_context(
+        *,
+        query_id: str,
+        trace_id: str,
+        handoff_reason: str,
+        quality_scores: dict[str, float] | None,
+        high_priority: bool,
+    ) -> dict[str, Any]:
+        return {
+            "reference_id": generate_handoff_reference_id(),
+            "trace_id": trace_id,
+            "timestamp_utc": _utcnow().isoformat(),
+            "priority": "high" if high_priority else "normal",
+            "trigger_reason": handoff_reason,
+            "user_metadata": {"email": "Not included"},
+            "session_id": "Not included",
+            "query_history": (
+                f"Query ID: {query_id}. Retrieve details from the authorized "
+                "FRIIS review queue."
+            ),
+            "generated_answer": "Withheld from email; review the authorized FRIIS record.",
+            "evaluation_scores": {
+                "faithfulness": (
+                    quality_scores["faithfulness"]
+                    if quality_scores is not None
+                    else "unavailable"
+                ),
+                "relevance": (
+                    quality_scores["answer_relevance"]
+                    if quality_scores is not None
+                    else "unavailable"
+                ),
+                "confidence": (
+                    round(quality_scores["confidence"] * 100)
+                    if quality_scores is not None
+                    else "unavailable"
+                ),
+            },
+            "retrieved_chunks": "Withheld from email; review the authorized FRIIS record.",
+            "conversation_flow": f"Query ID: {query_id}",
+        }
 
     def _claim_next_query(self) -> dict[str, Any] | None:
         now = _utcnow()

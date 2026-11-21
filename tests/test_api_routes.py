@@ -53,6 +53,7 @@ class FakeAPIService:
         self.calls: list[tuple[str, Any]] = []
         self.health_checks = {"database": HealthStatus.OK}
         self.escalation_conflict = False
+        self.ingestion_detail: dict[str, Any] | None = None
 
     async def submit_query(self, principal: Principal, request: Any) -> Any:
         self.calls.append(("submit_query", (principal, request)))
@@ -143,6 +144,10 @@ class FakeAPIService:
             "status": IngestionStatus.QUEUED,
             "submitted_at": NOW,
         }
+
+    async def get_ingestion(self, principal: Principal, ingestion_id: str) -> Any:
+        self.calls.append(("get_ingestion", (principal, ingestion_id)))
+        return self.ingestion_detail
 
     async def health(self) -> dict[str, HealthStatus]:
         return self.health_checks
@@ -318,6 +323,7 @@ def test_escalation_routes_restrict_access_and_surface_transition_conflicts(
 
 def test_ingestion_routes_upload_and_process_files(
     client: TestClient,
+    service: FakeAPIService,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -330,6 +336,8 @@ def test_ingestion_routes_upload_and_process_files(
         chunk_overlap: int,
         *,
         filename: str,
+        owner_subject: str,
+        ingestion_id: str,
     ) -> dict[str, Any]:
         processed.update(
             {
@@ -338,6 +346,8 @@ def test_ingestion_routes_upload_and_process_files(
                 "chunk_size": chunk_size,
                 "chunk_overlap": chunk_overlap,
                 "filename": filename,
+                "owner_subject": owner_subject,
+                "ingestion_id": ingestion_id,
             }
         )
         return {
@@ -366,6 +376,7 @@ def test_ingestion_routes_upload_and_process_files(
     assert start.status_code == 200
     assert start.json()["filename"] == "risk-policy.pdf"
     assert start.json()["total_chunks"] == 1
+    assert start.json()["ingestion_id"] == processed["ingestion_id"]
     assert {
         record.event
         for record in caplog.records
@@ -383,11 +394,11 @@ def test_ingestion_routes_upload_and_process_files(
     log_contents = log_file.read_text(encoding="utf-8")
     assert "Document ingestion pipeline completed" in log_contents
     assert '"total_chunks": 1' in log_contents
-    assert '"storage_table": "langchain_pg_embedding"' in log_contents
+    assert '"storage_table": "document_chunks"' in log_contents
     assert '"uploaded_filename": "risk-policy.pdf"' in log_contents
     assert any(
         record.event == "document_ingestion.pipeline_started"
-        and record.storage_table == "langchain_pg_embedding"
+        and record.storage_table == "document_chunks"
         for record in caplog.records
     )
     assert processed == {
@@ -395,12 +406,36 @@ def test_ingestion_routes_upload_and_process_files(
         "chunk_size": 500,
         "chunk_overlap": 50,
         "filename": "risk-policy.pdf",
+        "owner_subject": "operator-1",
+        "ingestion_id": processed["ingestion_id"],
         "temp_path": processed["temp_path"],
     }
     assert not processed["temp_path"].exists()
 
-    assert client.get(
+    service.ingestion_detail = {
+        "ingestion_id": "ingestion-1",
+        "source_type": "documents",
+        "status": "succeeded",
+        "submitted_at": NOW,
+        "completed_at": NOW,
+        "validation_errors": [],
+        "processed_sources": [
+            {"source_id": "uploaded-policy", "status": "succeeded"}
+        ],
+        "indexing_status": "succeeded",
+    }
+    status_response = client.get(
         "/api/v1/admin/ingestions/ingestion-1", headers=_auth("operator")
+    )
+    assert status_response.status_code == 200
+    assert status_response.json()["status"] == "succeeded"
+    assert (
+        status_response.json()["processed_sources"][0]["source_id"]
+        == "uploaded-policy"
+    )
+    service.ingestion_detail = None
+    assert client.get(
+        "/api/v1/admin/ingestions/missing", headers=_auth("operator")
     ).status_code == 404
     assert client.post(
         "/api/v1/admin/ingestions",
@@ -471,7 +506,7 @@ def test_health_reports_degraded_dependencies_as_unavailable(
     assert unhealthy.json()["status"] == "degraded"
 
 
-def test_openapi_exposes_all_ten_documented_routes(client: TestClient) -> None:
+def test_openapi_exposes_all_documented_routes(client: TestClient) -> None:
     openapi = client.get("/openapi.json").json()
     paths = openapi["paths"]
     expected = {
@@ -482,11 +517,12 @@ def test_openapi_exposes_all_ten_documented_routes(client: TestClient) -> None:
         "/api/v1/escalations": {"get"},
         "/api/v1/escalations/{escalation_id}": {"get", "patch"},
         "/api/v1/admin/ingestions": {"post"},
+        "/api/v1/admin/ingestions/{ingestion_id}": {"get"},
         "/health": {"get"},
     }
     for path, methods in expected.items():
         assert methods <= paths[path].keys()
-    assert sum(len(methods) for methods in expected.values()) == 9
+    assert sum(len(methods) for methods in expected.values()) == 10
 
     upload_operation = paths["/api/v1/admin/ingestions"]["post"]
     request_body = upload_operation["requestBody"]

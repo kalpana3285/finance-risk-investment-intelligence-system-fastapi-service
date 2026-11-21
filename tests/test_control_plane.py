@@ -1,5 +1,6 @@
 import asyncio
 import json
+from contextlib import nullcontext
 from datetime import date
 from types import SimpleNamespace
 
@@ -11,6 +12,7 @@ from agents import control_plane
 from agents.control_plane import (
     AgentEvidence,
     AzureSynthesisAgent,
+    OrchestrationResult,
     PortfolioMarketAnalystAgent,
     QueryContext,
     QueryPlanner,
@@ -138,6 +140,7 @@ def test_azure_synthesis_uses_langchain_and_validates_evidence(monkeypatch) -> N
     assert result.answer == "The supplied policy supports this summary."
     assert result.citation_ids == ("policy:p1",)
     assert agent._client.options["azure_deployment"] == "chat"
+    assert agent._evaluator_client is agent._client
     assert agent._client.options["temperature"] == 0
     assert agent._client.options["max_retries"] == 1
     assert agent._client.bound_options == {"response_format": {"type": "json_object"}}
@@ -194,6 +197,70 @@ def test_azure_synthesis_rejects_citations_outside_supplied_evidence(
                 (_evidence(),),
             )
         )
+
+
+def test_azure_synthesis_evaluates_answer_against_citations(monkeypatch) -> None:
+    class FakeChatModel:
+        def __init__(self, **kwargs) -> None:
+            self.options = kwargs
+            self.root_async_client = SimpleNamespace(close=lambda: None)
+            self.messages = None
+
+        def bind(self, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            self.messages = messages
+            return SimpleNamespace(
+                content=json.dumps(
+                    {
+                        "faithfulness": 0.9,
+                        "correctness": 0.85,
+                        "answer_relevance": 0.8,
+                        "context_precision": 0.9,
+                        "usefulness": 0.75,
+                        "confidence": 0.7,
+                    }
+                )
+            )
+
+    monkeypatch.setattr(control_plane, "AzureChatOpenAI", FakeChatModel)
+    monkeypatch.setattr(
+        control_plane, "observation", lambda **_kwargs: nullcontext(None)
+    )
+    agent = AzureSynthesisAgent(
+        endpoint="https://example.openai.azure.com/",
+        api_key="test-key",
+        api_version="2024-06-01",
+        deployment="chat",
+        evaluator_deployment="strong-judge",
+    )
+    result = OrchestrationResult(
+        status=QueryStatus.COMPLETED,
+        answer="The evidence supports this summary.",
+        citations=(_evidence().citation,),
+    )
+
+    scores = asyncio.run(
+        agent.evaluate_result(
+            "query-1",
+            "Summarize the policy evidence.",
+            result,
+        )
+    )
+
+    assert scores.faithfulness == 0.9
+    assert scores.correctness == 0.85
+    assert scores.answer_relevance == 0.8
+    assert scores.context_precision == 0.9
+    assert scores.usefulness == 0.75
+    assert scores.confidence == 0.7
+    assert agent._evaluator_client.options["azure_deployment"] == "strong-judge"
+    assert "untrusted data" in agent._evaluator_client.messages[0].content
+    request_payload = json.loads(agent._evaluator_client.messages[1].content)
+    assert request_payload["question"] == "Summarize the policy evidence."
+    assert request_payload["answer"] == "The evidence supports this summary."
+    assert request_payload["citations"][0]["excerpt"] == "The approved policy evidence."
 
 
 def test_planner_clarifies_portfolio_questions_without_authorized_id() -> None:

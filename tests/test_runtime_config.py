@@ -37,6 +37,7 @@ ENV_KEYS = (
     "AZURE_OPENAI_API_VERSION",
     "AZURE_OPENAI_EMBEDDING_DEPLOYMENT",
     "AZURE_OPENAI_LLM_DEPLOYMENT",
+    "AZURE_OPENAI_JUDGE_DEPLOYMENT",
 )
 
 
@@ -91,7 +92,7 @@ def test_runtime_settings_load_auth0_configuration_from_env_file(
 ) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text(
-        "FRIIS_DATABASE_URL=sqlite:///./test.db\nFRIIS_AUTH0_DOMAIN=tenant.example.auth0.com\nFRIIS_AUTH0_API_AUDIENCE=https://api.example.test\nFRIIS_AUTH0_SWAGGER_CLIENT_ID=swagger-client-id\nFRIIS_CORS_ALLOW_ORIGINS=https://app.example.test/, https://preview.example.test\nFRIIS_AUTO_CREATE_SCHEMA=true"
+        "FRIIS_DATABASE_URL=sqlite:///./test.db\nFRIIS_AUTH0_DOMAIN=tenant.example.auth0.com\nFRIIS_AUTH0_API_AUDIENCE=https://api.example.test\nFRIIS_AUTH0_SWAGGER_CLIENT_ID=swagger-client-id\nFRIIS_CORS_ALLOW_ORIGINS=https://app.example.test/, https://preview.example.test\nFRIIS_AUTO_CREATE_SCHEMA=true\nAZURE_OPENAI_JUDGE_DEPLOYMENT=strong-judge"
     )
     before = {key: os.environ.get(key) for key in ENV_KEYS}
     for key in ENV_KEYS:
@@ -115,6 +116,7 @@ def test_runtime_settings_load_auth0_configuration_from_env_file(
     )
     assert settings.auto_create_schema is True
     assert settings.query_worker_ready is False
+    assert settings.azure_openai_judge_deployment == "strong-judge"
 
 
 def test_runtime_resolves_documents_root_from_project_directory(

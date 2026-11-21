@@ -25,6 +25,7 @@ from agents.control_plane import (
 from agents.tool_enabled_agent import create_finance_tool_agent
 from config.log_config import setup_logging
 from config.runtime import RuntimeSettings
+from handoff.handoff_service import send_handoff_email
 from routes.api import router
 from routes.auth import create_auth0_token_router
 from schemas import ErrorResponse
@@ -393,6 +394,7 @@ def create_runtime_app(
             api_key=runtime.azure_openai_api_key,
             api_version=runtime.azure_openai_api_version,
             deployment=runtime.azure_openai_llm_deployment,
+            evaluator_deployment=runtime.azure_openai_judge_deployment or None,
         )
         synthesis_client = synthesizer
         document_agent = DocumentRetrievalAgent(engine, embedder)
@@ -413,6 +415,8 @@ def create_runtime_app(
             create_supervisor,
             poll_seconds=runtime.ingestion_poll_seconds,
             guardrails_validator=GuardrailsValidator(),
+            result_evaluator=synthesizer.evaluate_result,
+            handoff_email_sender=send_handoff_email,
         )
     source_registration = None
     if runtime.ingestion_worker_enabled:

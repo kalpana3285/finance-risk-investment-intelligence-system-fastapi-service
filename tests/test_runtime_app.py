@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.factory import create_runtime_app
 from config.runtime import RuntimeSettings
+from handoff.handoff_service import send_handoff_email
 from security.auth import Auth0Authenticator
 from services.database_api_service import DatabaseAPIService
 from services.guardrails import GuardrailsValidator
@@ -63,6 +64,7 @@ def test_runtime_app_wires_optional_query_control_plane_and_worker(
 
     assert isinstance(app.state.query_worker, QueryWorker)
     assert isinstance(app.state.query_worker.guardrails_validator, GuardrailsValidator)
+    assert app.state.query_worker.handoff_email_sender is send_handoff_email
     with TestClient(app) as client:
         response = client.get("/health")
     assert response.status_code == 503

@@ -43,7 +43,14 @@ directory so the local SQLite URL and `.env` file resolve predictably.
    configured Azure deployment asynchronously with LangChain's
    `AzureChatOpenAI.ainvoke`, requests JSON output, and validates returned
    citations against the retrieved evidence. Query text and retrieved evidence
-   are sent to the configured Azure OpenAI endpoint. The Supervisor runs on
+   are sent to the configured Azure OpenAI endpoint. Optionally set
+   `AZURE_OPENAI_JUDGE_DEPLOYMENT` to a separate, strong chat deployment (for
+   example, GPT-4.1 or GPT-4o) that supports JSON output; the live and offline
+   judge calls use it, falling back to `AZURE_OPENAI_LLM_DEPLOYMENT` when unset.
+   The versioned evaluator prompts score faithfulness, correctness, answer
+   relevance, usefulness, and context precision. Risk-classification accuracy
+   is an exact comparison with the golden label, not a judge self-assessment.
+   The Supervisor runs on
    LangGraph's `StateGraph`, using typed request state, parallel specialist
    fan-out, a dependent risk-manager step, and conditional retry/escalation
    edges. It preserves deterministic intent routing, citation allowlisting, one
@@ -117,8 +124,16 @@ state.
 10. Optional Langfuse tracing uses the Langfuse Python SDK 5.x. Set
     `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and optionally
     `LANGFUSE_BASE_URL` plus `LANGFUSE_TRACING_ENVIRONMENT` in the local `.env`.
-    Tracing is disabled when credentials are absent or `LANGFUSE_ENABLED=false`;
-    FRIIS continues to run normally. Query processing creates a trace with
+    When enabled with both credentials, FRIIS loads managed prompt templates
+    from Langfuse by their catalog names and configured labels. Missing prompts
+    and unsupported prompt formats are logged and use the
+    local catalog template; authentication and other fetch failures are
+    explicit. Without credentials or with `LANGFUSE_ENABLED=false`, the local
+    prompt catalog is used. Managed prompts are loaded when their workflow
+    modules are initialized, so restart the application after publishing
+    prompt changes.
+    Tracing is disabled when credentials are absent or
+    `LANGFUSE_ENABLED=false`; FRIIS continues to run normally. Query processing creates a trace with
     specialist, retrieval, embedding, and synthesis observations. Upload and
     approved-source ingestion also create processing observations. Every trace
     includes flow identifiers, selected portfolio scope, step counts, model
@@ -127,6 +142,22 @@ state.
     document text are not sent to Langfuse. Keep Langfuse credentials in `.env`
     and verify your organization's observability data-handling approval before
     enabling remote tracing.
+    Completed, clarification, and escalated query results are scored for
+    faithfulness, correctness, answer relevance, context precision, usefulness,
+    and confidence on a 0-1 scale. A bounded evaluator call uses the PII-redacted
+    question, result, and cited excerpts
+    with the configured Azure chat deployment. When Langfuse tracing is enabled,
+    only numeric scores and the query ID are attached to the trace. Results below
+    the handoff thresholds (faithfulness 0.6, relevance 0.5, or confidence 0.4),
+    scored results without evidence, and existing escalations are persisted for
+    human review before an email notification is attempted. Configure `SMTP_HOST`,
+    `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `APPLICATION_EMAIL`, and
+    `SUPPORT_EMAIL` to enable notifications. Email contains the query/trace
+    identifiers, trigger reason, and scores, but not the question, answer,
+    citations, or portfolio data. Evaluation failures do not fail or escalate an
+    otherwise completed query; email failures are logged after the query result
+    is persisted. The evaluator has a 15-second timeout and runs before the
+    worker marks the result terminal.
 
 Application logs are written to stdout and, outside Vercel, appended to
 `logger.txt` in this backend directory. Vercel's function filesystem is
@@ -134,8 +165,8 @@ read-only, so deployed logs are available through the Vercel function logs. The
 admin document-upload endpoint logs request validation,
 upload size/type, pipeline start and completion statistics, failures, and
 temporary-file cleanup. Ingestion logs include the normalized destination table
-(`document_chunks`) and chunk counts. Document contents and credentials are not
-logged.
+(`document_chunks`), ingestion IDs, and chunk counts. Document contents and
+credentials are not logged.
 
 The operator-only `POST /api/v1/admin/ingestions` endpoint accepts a multipart
 `file` upload (`.pdf`, `.txt`, `.md`, `.markdown`, `.html`, or `.htm`, up to
@@ -159,18 +190,23 @@ RAG ingestion follows these operating principles:
    already indexed upload returns its existing chunk IDs without another
    embedding call.
 2. **Incrementality:** unchanged versions are skipped. Changed content creates
-   a new version; after its chunks are committed, prior versions are marked
-   `superseded` so retrieval sees the current valid version. A changed chunking
-   profile triggers a reindex and records a new profile.
+   a new version; unchanged chunk text reuses its prior embedding. After its
+   chunks are committed, prior versions are marked `superseded` so retrieval
+   sees the current valid version. A changed chunking profile triggers a
+   reindex and records a new profile.
 3. **Determinism:** chunk ordering, stable IDs, a named/versioned chunking
    profile, and stable text normalization make retries reproducible. Bump the
    ingestion pipeline version when extraction or chunking behavior changes.
+   Embedding provenance records the configured deployment and API version, but
+   Azure does not expose an immutable model-build identifier here; keep
+   deployments pinned operationally and reindex after retargeting one.
 4. **Structure awareness:** splitting favors headings, paragraphs, lines, and
    sentence boundaries; PDF page numbers, table/image content kinds, section
    hints, and chunk offsets are retained with each passage.
 5. **Noise reduction:** ingestion removes control characters, zero-width
-   artifacts, soft hyphens, non-breaking spaces, trailing whitespace, and
-   excessive blank lines while retaining meaningful line and table structure.
+   artifacts, soft hyphens, non-breaking spaces, repeated page headers and
+   footers, page counters, trailing whitespace, and excessive blank lines while
+   retaining meaningful line and table structure.
 6. **Metadata first:** source key, original filename, file type, content hash,
    version, chunk profile/index, page, section, and pipeline version are stored
    alongside chunks for filtering, citations, and diagnosis.
@@ -243,7 +279,14 @@ work. The optional document worker loads approved PDFs with LangChain's
 `PyPDFLoader`, supplements extracted text with PyMuPDF table extraction and
 vision-generated captions for visual pages, splits each content type with
 `RecursiveCharacterTextSplitter`, stores versioned chunks and 1536-dimensional
-vectors in PostgreSQL/pgvector, and records per-source results. Direct file uploads also register a source and version and write chunks to the same `document_chunks` table searched by the query worker; they return processing statistics immediately and do not create a queued ingestion run. The optional query worker consumes queued queries, writes
+vectors in PostgreSQL/pgvector, and records per-source results. Successful
+direct file uploads also register a source and version, persist a terminal
+ingestion-run record, and write chunks to the same `document_chunks` table
+searched by the query worker. The response includes an `ingestion_id`; the
+submitting operator can retrieve its status at
+`GET /api/v1/admin/ingestions/{ingestion_id}`. Structured-data ingestion
+requests are rejected until a compatible worker and validation path are
+implemented. The optional query worker consumes queued queries, writes
 redacted workflow events, delegates to document/portfolio/risk specialists,
 validates citations, and persists completion or an escalation packet. Leave
 `FRIIS_QUERY_WORKER_ENABLED=false` when no approved Azure chat deployment is
@@ -291,21 +334,37 @@ The versioned 50-case evaluation set is in
 contains 15 policy/RAG, 10 portfolio/SQL, 10 hybrid-risk, 10 high-risk decision,
 and 5 escalation cases, along with source references, answer rubrics, escalation
 expectations, and a deterministic synthetic SQL fixture with expected results.
-The fixture belongs in an isolated evaluation database; do not load it into a
-shared or production database. The set is marked `draft_requires_domain_review`:
-have policy and risk stakeholders verify the labels and expected behavior before
-using it for acceptance claims.
+The runner loads the fixture into an isolated in-memory SQLite database; do not
+copy its synthetic rows into a shared or production database. The set is marked
+`draft_requires_domain_review`: have policy and risk stakeholders verify the
+labels and expected behavior before using it for acceptance claims.
 
 An automated runner is available at
 [`evaluation/slo_evaluation.py`](./evaluation/slo_evaluation.py). It submits the
 cases serially to the authenticated query API, waits for terminal results, and
-uses the configured Azure OpenAI chat deployment as an LLM judge. It does not
-create a database, load fixture rows, or change the project's data.
+uses the configured Azure OpenAI chat deployment as an LLM judge for online
+quality scores.
+Set `AZURE_OPENAI_JUDGE_DEPLOYMENT` to a separate, strong model for judging;
+it falls back to `AZURE_OPENAI_LLM_DEPLOYMENT`. Both use deterministic
+generation where supported. The v2 evaluator rubric scores faithfulness,
+correctness, answer relevance, usefulness, and context precision. Risk
+classification accuracy is an exact comparison with the golden expected label,
+not a self-reported judge score.
+
+To run evaluations in Langfuse, upload the labeled dataset with
+`python -m evaluation.dataset_evaluation`, then run your Langfuse evaluator
+against that versioned dataset. Supply the case's `answer_rubric`,
+`required_evidence`, `expected_result` (when present), and
+`expected_risk_class` alongside the generated status, answer, and cited
+excerpts. The prompt contracts are versioned in
+[`prompts/catalog.py`](./prompts/catalog.py); keep the expected risk label as a
+comparison target, not an instruction to copy.
 
 To run it:
 
-1. Review the golden labels and load the SQL fixture only into a dedicated,
-   isolated evaluation database.
+1. Review the golden labels with domain stakeholders. The runner seeds an
+   isolated in-memory SQLite database from the fixture; it does not require
+   loading fixture rows into another database.
 2. Start the API with the query worker enabled and its approved Azure
    deployments configured. Use an evaluation bearer token with the roles and
    portfolio scope needed for the fixture cases.
@@ -316,30 +375,58 @@ To run it:
    python -m evaluation.slo_evaluation --api-url http://127.0.0.1:8000
    ```
 
-The runner always evaluates deterministic planner routes, exact structured-agent
-evidence against the isolated fixture, RBAC scope checks, and the currently
-implemented input/output guardrails locally. It does not connect to or mutate the
-configured application database for those checks. The runner reads Azure
+The runner evaluates deterministic planner routes, structured-agent evidence
+against the fixture in an isolated in-memory SQLite database, cross-tenant
+authorization, and the implemented input/output guardrails locally. RBAC
+checks cover authorized and cross-tenant portfolio access, query submission,
+query ownership, and structured authorization-denial audit events. Guardrails
+use the versioned [adversarial dataset](./evaluation/guardrail_attack_dataset_v1.json)
+for empty/oversized input, benign input, and output PII redaction. Its
+prompt-injection case is recorded as unverified because safe handling requires
+an end-to-end model/API assertion; it is not included in the deterministic
+pass rate. Each offline SQL case includes its normalized `actual_result` and
+`expected_result`; the comparison rejects missing, unexpected, or mismatched
+rows and values. These results are written only to the local evaluation
+report, not exposed by the production API. The runner does not connect to or
+mutate the configured application database for offline checks. The runner reads Azure
 endpoint, API key, API version, and chat deployment settings from the process
-environment or this backend's git-ignored `.env`.
+environment or this backend's git-ignored `.env`. The judge deployment is
+selected by `AZURE_OPENAI_JUDGE_DEPLOYMENT` when set; otherwise the runner
+reuses `AZURE_OPENAI_LLM_DEPLOYMENT`.
 `FRIIS_EVALUATION_API_URL` may be used instead of `--api-url`. An optional
 `--report path.json` writes a report without storing answer text. The runner
 returns a non-zero exit status if any measured SLO misses its target or a
 configured Langfuse publication fails. If `FRIIS_EVALUATION_TOKEN` is absent,
 the 50 online query/judge cases are skipped and their scores remain unmeasured.
-When Langfuse credentials are configured, aggregate offline scores are attached
-to an evaluation trace. Online per-query scores link to the research traces by
-the query UUID. Use `--skip-langfuse` to generate a local-only report.
+When Langfuse credentials are configured, measured deterministic SLOs—including
+latency, retrieval recall, task success, SQL correctness, routing, risk
+classification, attribution, RBAC, guardrails, critical misclassification, and
+escalation recall—are published with sample counts and target status on an
+aggregate evaluation trace. Metrics without observations are omitted rather
+than published as zero. Online per-query deterministic and judge scores link
+to the research traces by query UUID. Use `--skip-langfuse` to generate a
+local-only report.
 
 The report includes the documented quality, latency, retrieval, SQL, routing,
 escalation, attribution, and risk-classification SLOs. Quality score targets
 are reported as the fraction of cases meeting the per-case score threshold;
 latency uses p95 end-to-end API time. Routing is computed using the same
 deterministic `QueryPlanner` used by the supervisor because the public query
-response does not expose selected agents. RBAC violation rate and guardrail
-effectiveness are explicitly reported as unmeasured: this dataset does not run
-cross-customer authorization or labeled attack tests. A judge's risk labels and
-confidence are evaluation signals, not independent ground truth. Exact SQL
-correctness is also reported as unmeasured: the query API does not expose the
-executed result set needed to compare structured-data results against fixtures.
+response does not expose selected agents. Critical misclassification and
+mandatory escalation metrics use the golden labels as denominators; an
+unevaluated case in a partial run counts as a miss; if no online cases ran,
+the metric stays unmeasured and lists missing case IDs. It also reports
+critical/non-critical dataset coverage. RBAC and
+deterministic guardrail results are measured by their offline suites. A judge's
+risk labels and confidence are evaluation signals, not independent ground
+truth. Accuracy counts labeled route, risk, and SQL predictions; retrieval
+recall matches required source sections and structured-record references
+against the citations returned by the API, not unexposed retriever candidates.
+Task success requires the expected terminal status, correct route and risk
+label, complete required-evidence retrieval, and an exact SQL result for SQL
+cases. SQL correctness is checked by running the structured analyst against an
+isolated SQLite fixture and comparing normalized rows and values; it does not
+measure SQL results returned through the public query API or a future N2SQL
+executor unless that execution path is explicitly wired into the offline
+evaluator.
 # finance-risk-investment-intelligence-system-fastapi-service

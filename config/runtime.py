@@ -23,6 +23,7 @@ class RuntimeSettings:
     azure_openai_api_version: str = ""
     azure_openai_embedding_deployment: str = ""
     azure_openai_llm_deployment: str = ""
+    azure_openai_judge_deployment: str = ""
     documents_root: Path = Path("Documents")
     embedding_dimensions: int = 1536
     ingestion_worker_enabled: bool = False
@@ -102,6 +103,9 @@ class RuntimeSettings:
             ),
             azure_openai_llm_deployment=(
                 os.getenv("AZURE_OPENAI_LLM_DEPLOYMENT") or ""
+            ),
+            azure_openai_judge_deployment=(
+                os.getenv("AZURE_OPENAI_JUDGE_DEPLOYMENT") or ""
             ),
             documents_root=(
                 project_root / os.getenv("FRIIS_DOCUMENTS_ROOT", "Documents")

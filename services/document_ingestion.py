@@ -33,8 +33,15 @@ from services.embeddings import EmbeddingProvider, EmbeddingProviderError
 from services.multimodal_processing import (
     MultimodalProcessingError,
     extract_pdf_supplemental_documents,
+    visual_processing_profile,
 )
 from services.langfuse_tracing import observation
+from services.ingestion_utils import (
+    chunk_text_digest,
+    load_reusable_chunk_vectors,
+    remove_repeated_page_marginalia,
+    sectioned_pages,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +147,22 @@ class DocumentIngestionWorker:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.embedding_batch_size = embedding_batch_size
-        self.chunking_profile = f"friis-pdf-v2-{chunk_size}-overlap-{chunk_overlap}"
+        self.embedding_deployment = str(
+            getattr(embedder, "deployment", type(embedder).__name__)
+        )
+        self.embedding_api_version = str(
+            getattr(embedder, "api_version", "unspecified")
+        )
+        self.vision_profile = visual_processing_profile()
+        profile_config = (
+            f"friis-approved-pdf-v3|{chunk_size}|{chunk_overlap}|"
+            f"{self.embedding_deployment}|{self.embedding_api_version}|"
+            f"{self.vision_profile}"
+        )
+        profile_digest = sha256(profile_config.encode("utf-8")).hexdigest()[:16]
+        self.chunking_profile = (
+            f"friis-pdf-v3-{chunk_size}-{chunk_overlap}-{profile_digest}"
+        )
         self._stop = asyncio.Event()
         if embedder.dimensions != EMBEDDING_DIMENSIONS:
             raise ValueError("The pgvector schema requires 1536-dimensional embeddings")
@@ -337,22 +359,52 @@ class DocumentIngestionWorker:
                 },
             )
             return
-        texts = [text for text, _, _ in chunks]
-        vectors: list[list[float]] = []
+        reusable_vectors = await asyncio.to_thread(
+            load_reusable_chunk_vectors,
+            self.engine,
+            source["document_id"],
+            self.chunking_profile,
+        )
+        vectors: list[list[float] | None] = [None] * len(chunks)
+        missing_by_digest: dict[str, tuple[str, list[int]]] = {}
+        reused_count = 0
+        for index, (text, _, _, _) in enumerate(chunks):
+            digest = chunk_text_digest(text)
+            existing_vector = reusable_vectors.get(digest)
+            if existing_vector is not None:
+                vectors[index] = existing_vector
+                reused_count += 1
+            else:
+                if digest not in missing_by_digest:
+                    missing_by_digest[digest] = (text, [])
+                missing_by_digest[digest][1].append(index)
+        missing_digests = list(missing_by_digest)
         try:
-            for start in range(0, len(texts), self.embedding_batch_size):
-                vectors.extend(
-                    await self.embedder.embed(
-                        texts[start : start + self.embedding_batch_size]
-                    )
+            for start in range(0, len(missing_digests), self.embedding_batch_size):
+                batch_digests = missing_digests[
+                    start : start + self.embedding_batch_size
+                ]
+                batch_vectors = await self.embedder.embed(
+                    [missing_by_digest[digest][0] for digest in batch_digests]
                 )
+                if len(batch_vectors) != len(batch_digests):
+                    raise DocumentIngestionError(
+                        source_id,
+                        "Embedding provider returned an incomplete batch.",
+                        "embedding_count_mismatch",
+                    )
+                for digest, vector in zip(batch_digests, batch_vectors, strict=True):
+                    reusable_vectors[digest] = vector
+                    for index in missing_by_digest[digest][1]:
+                        vectors[index] = vector
         except EmbeddingProviderError as exc:
             raise DocumentIngestionError(
                 source_id,
                 "Embedding provider failed to process the source.",
                 "embedding_failed",
             ) from exc
-        if len(vectors) != len(chunks):
+        complete_vectors = [vector for vector in vectors if vector is not None]
+        if len(complete_vectors) != len(chunks):
             raise DocumentIngestionError(
                 source_id,
                 "Embedding provider returned an incomplete batch.",
@@ -361,20 +413,33 @@ class DocumentIngestionWorker:
         if any(
             len(vector) != EMBEDDING_DIMENSIONS
             or not all(math.isfinite(value) for value in vector)
-            for vector in vectors
+            for vector in complete_vectors
         ):
             raise DocumentIngestionError(
                 source_id,
                 "Embedding provider returned an invalid vector.",
                 "invalid_embedding",
             )
+        logger.info(
+            "Document chunk embeddings prepared",
+            extra={
+                "event": "document_ingestion.embeddings_prepared",
+                "ingestion_id": ingestion_id,
+                "source_id": source_id,
+                "chunk_count": len(chunks),
+                "reused_embedding_count": reused_count,
+                "new_embedding_count": len(missing_digests),
+                "embedding_deployment": self.embedding_deployment,
+                "chunking_profile": self.chunking_profile,
+            },
+        )
         await asyncio.to_thread(
             self._store_chunks,
             ingestion_id,
             source_id,
             version_id,
             chunks,
-            vectors,
+            complete_vectors,
         )
 
     def _get_approved_source(self, source_id: str) -> dict[str, Any] | None:
@@ -538,7 +603,7 @@ class DocumentIngestionWorker:
         ingestion_id: str,
         source_id: str,
         version_id: str,
-        chunks: list[tuple[str, int, str]],
+        chunks: list[tuple[str, int, str, str | None]],
         vectors: list[list[float]],
     ) -> None:
         now = _utcnow()
@@ -553,7 +618,7 @@ class DocumentIngestionWorker:
                 "chunk_id": str(
                     uuid5(
                         NAMESPACE_URL,
-                        f"friis:{version_id}:{self.chunking_profile}:{index}:{sha256(text.encode('utf-8')).hexdigest()}",
+                        f"friis:{version_id}:{self.chunking_profile}:{index}:{chunk_text_digest(text)}",
                     )
                 ),
                 "document_version_id": version_id,
@@ -563,7 +628,7 @@ class DocumentIngestionWorker:
                 "text_storage_uri": None,
                 "page_start": page_number,
                 "page_end": page_number,
-                "section_path": _infer_section_path(text),
+                "section_path": section_path,
                 "metadata": {
                     "source_id": source_id,
                     "chunk_index": index,
@@ -571,18 +636,21 @@ class DocumentIngestionWorker:
                     "document_version_id": version_id,
                     "content_sha256": content_digest,
                     "page_number": page_number,
-                    "section_path": _infer_section_path(text),
-                    "ingestion_pipeline_version": "friis-approved-pdf-v2",
+                    "section_path": section_path,
+                    "ingestion_pipeline_version": "friis-approved-pdf-v3",
+                    "embedding_deployment": self.embedding_deployment,
+                    "embedding_api_version": self.embedding_api_version,
+                    "vision_profile": self.vision_profile,
                 },
                 "vector_record_id": None,
                 "embedding": vector,
                 "created_at": now,
             }
-            for index, ((text, page_number, content_type), vector) in enumerate(
+            for index, ((text, page_number, content_type, section_path), vector) in enumerate(
                 zip(chunks, vectors, strict=True)
             )
         ]
-        for row, (_, _, content_type) in zip(rows, chunks, strict=True):
+        for row, (_, _, content_type, _) in zip(rows, chunks, strict=True):
             row["metadata"]["content_type"] = content_type
         with self.engine.begin() as connection:
             connection.execute(
@@ -711,7 +779,12 @@ def _extract_pdf_pages(file_path: Path, source_id: str) -> list[tuple[str, int]]
         raise DocumentIngestionError(
             source_id, "PDF could not be parsed or extracted.", "invalid_pdf"
         ) from exc
-    return pages
+    cleaned = remove_repeated_page_marginalia([text for text, _ in pages])
+    return [
+        (text, page_number)
+        for text, (_, page_number) in zip(cleaned, pages, strict=True)
+        if text.strip()
+    ]
 
 
 def _chunk_pages(
@@ -719,7 +792,7 @@ def _chunk_pages(
     *,
     chunk_size: int,
     chunk_overlap: int,
-) -> list[tuple[str, int]]:
+) -> list[tuple[str, int, str | None]]:
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
@@ -727,11 +800,20 @@ def _chunk_pages(
         length_function=len,
     )
     documents = [
-        Document(page_content=text, metadata={"page": page_number})
-        for text, page_number in pages
+        Document(
+            page_content=text,
+            metadata={"page": page_number, "section_path": section_path},
+        )
+        for text, page_number, section_path in sectioned_pages(pages)
     ]
     return [
-        (chunk.page_content, int(chunk.metadata["page"]))
+        (
+            chunk.page_content,
+            int(chunk.metadata["page"]),
+            str(chunk.metadata["section_path"])
+            if chunk.metadata.get("section_path")
+            else None,
+        )
         for chunk in splitter.split_documents(documents)
     ]
 
@@ -742,15 +824,21 @@ def _chunk_multimodal_content(
     *,
     chunk_size: int,
     chunk_overlap: int,
-) -> list[tuple[str, int, str]]:
+) -> list[tuple[str, int, str, str | None]]:
+    text_chunks = _chunk_pages(
+        pages,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+    )
     chunks = [
-        (text, page_number, "text")
-        for text, page_number in _chunk_pages(
-            pages,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-        )
+        (text, page_number, "text", section_path)
+        for text, page_number, section_path in text_chunks
     ]
+    section_by_page = {
+        page_number: section_path
+        for _, page_number, section_path in sectioned_pages(pages)
+        if section_path is not None
+    }
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
@@ -761,7 +849,12 @@ def _chunk_multimodal_content(
         page_number = int(document.metadata["page"])
         content_type = str(document.metadata["content_type"])
         chunks.extend(
-            (chunk.page_content, page_number, content_type)
+            (
+                chunk.page_content,
+                page_number,
+                content_type,
+                section_by_page.get(page_number),
+            )
             for chunk in splitter.split_documents([document])
         )
     return chunks
@@ -778,15 +871,3 @@ def _normalize_extracted_text(text: str) -> str:
     text = text.replace("\u00a0", " ").replace("\u00ad", "")
     lines = [" ".join(line.split()) for line in text.splitlines()]
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
-
-
-def _infer_section_path(text: str) -> str | None:
-    for line in text.splitlines():
-        heading = re.match(r"^\s*#{1,6}\s+(.+?)\s*#*\s*$", line)
-        if heading:
-            return heading.group(1).strip()
-        normalized = line.strip()
-        if 4 <= len(normalized) <= 100 and normalized.upper() == normalized:
-            if any(character.isalpha() for character in normalized):
-                return normalized
-    return None

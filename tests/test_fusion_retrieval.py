@@ -119,6 +119,11 @@ async def test_document_agent_fuses_vector_and_bm25_rankings() -> None:
     assert result.evidence[0].content == "Basel liquidity stress requirements."
     assert embedder.queries == [["Basel liquidity stress"]]
     assert len(engine.connection.statements) == 2
+    compiled = engine.connection.statements[0].compile()
+    assert "source_documents.access_classification" in str(
+        engine.connection.statements[0]
+    )
+    assert "internal" in compiled.params.values()
 
 
 def test_reciprocal_rank_fusion_promotes_shared_relevant_results() -> None:

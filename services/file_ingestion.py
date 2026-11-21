@@ -10,7 +10,7 @@ import unicodedata
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from langchain_community.document_loaders import BSHTMLLoader, PyPDFLoader, TextLoader
 from langchain_openai import AzureOpenAIEmbeddings
@@ -21,14 +21,26 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.engine import make_url
 
 from config.runtime import RuntimeSettings
+from schemas.api import IngestionStatus
 from services.database import (
     EMBEDDING_DIMENSIONS,
     document_chunks,
     document_versions,
+    ingestion_run_items,
+    ingestion_runs,
     source_documents,
 )
-from services.multimodal_processing import extract_pdf_supplemental_documents
+from services.multimodal_processing import (
+    extract_pdf_supplemental_documents,
+    visual_processing_profile,
+)
 from services.langfuse_tracing import observation
+from services.ingestion_utils import (
+    chunk_text_digest,
+    load_reusable_chunk_vectors,
+    remove_repeated_page_marginalia,
+    section_path_at_offset,
+)
 
 SUPPORTED_FILE_TYPES = {
     ".pdf": "pdf",
@@ -39,7 +51,7 @@ SUPPORTED_FILE_TYPES = {
     ".htm": "html",
 }
 DOCUMENT_CHUNKS_TABLE = "document_chunks"
-INGESTION_PIPELINE_VERSION = "friis-upload-v2"
+INGESTION_PIPELINE_VERSION = "friis-upload-v3"
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +63,8 @@ def process_and_store_file(
     *,
     filename: str | None = None,
     engine: Engine | None = None,
+    owner_subject: str | None = None,
+    ingestion_id: str | None = None,
 ) -> dict[str, object]:
     """Load, split, embed, and store an upload in FRIIS's searchable tables."""
     started_at = time.perf_counter()
@@ -63,6 +77,7 @@ def process_and_store_file(
         raise ValueError("Chunk overlap must be non-negative and smaller than chunk size.")
 
     original_filename = filename or file_path.name
+    run_id = ingestion_id or str(uuid4())
     with observation(
         name="load-document",
         as_type="span",
@@ -71,6 +86,13 @@ def process_and_store_file(
     ) as load_trace:
         if file_type == "pdf":
             documents = PyPDFLoader(str(file_path)).load()
+            cleaned_pages = remove_repeated_page_marginalia(
+                [document.page_content for document in documents]
+            )
+            for document, page_text in zip(
+                documents, cleaned_pages, strict=True
+            ):
+                document.page_content = page_text
         elif file_type == "html":
             documents = BSHTMLLoader(str(file_path)).load()
         else:
@@ -109,6 +131,8 @@ def process_and_store_file(
                 "content_type": document.metadata.get("content_type", "text"),
             }
         )
+    for document_index, document in enumerate(documents):
+        document.metadata["_ingestion_document_index"] = document_index
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
@@ -134,34 +158,6 @@ def process_and_store_file(
     if not chunks:
         raise ValueError("The uploaded document produced no text chunks.")
 
-    content_digest = sha256(file_path.read_bytes()).hexdigest()
-    normalized_name = unicodedata.normalize(
-        "NFKC", Path(original_filename).name
-    ).strip().casefold()
-    source_key = f"uploaded-{sha256(normalized_name.encode('utf-8')).hexdigest()[:32]}"
-    version_namespace = f"friis-upload:{source_key}:{content_digest}"
-    profile = f"{INGESTION_PIPELINE_VERSION}-{chunk_size}-overlap-{chunk_overlap}"
-    chunk_ids = [
-        str(
-            uuid5(
-                NAMESPACE_URL,
-                f"{version_namespace}:{profile}:{index}:{sha256(chunk.page_content.encode('utf-8')).hexdigest()}",
-            )
-        )
-        for index, chunk in enumerate(chunks)
-    ]
-    for index, (chunk, chunk_id) in enumerate(zip(chunks, chunk_ids, strict=True)):
-        section_path = _find_section_path(chunk.page_content, chunk.metadata)
-        chunk.metadata.update(
-            {
-                "chunk_id": chunk_id,
-                "chunk_index": index,
-                "section_path": section_path,
-                "chunking_profile": profile,
-                "content_sha256": content_digest,
-            }
-        )
-
     settings = RuntimeSettings.from_environment()
     if not all(
         (
@@ -180,6 +176,61 @@ def process_and_store_file(
     }:
         raise RuntimeError("Document ingestion requires a PostgreSQL database URL.")
 
+    content_digest = sha256(file_path.read_bytes()).hexdigest()
+    normalized_name = unicodedata.normalize(
+        "NFKC", Path(original_filename).name
+    ).strip().casefold()
+    source_key = f"uploaded-{sha256(normalized_name.encode('utf-8')).hexdigest()[:32]}"
+    version_namespace = f"friis-upload:{source_key}:{content_digest}"
+    vision_profile = (
+        visual_processing_profile() if file_type == "pdf" else "not_applicable"
+    )
+    profile_config = (
+        f"{INGESTION_PIPELINE_VERSION}|{chunk_size}|{chunk_overlap}|"
+        f"{settings.azure_openai_embedding_deployment}|"
+        f"{settings.azure_openai_api_version}|{vision_profile}"
+    )
+    profile_digest = sha256(profile_config.encode("utf-8")).hexdigest()[:16]
+    profile = (
+        f"{INGESTION_PIPELINE_VERSION}-{chunk_size}-{chunk_overlap}-{profile_digest}"
+    )
+    chunk_ids = [
+        str(
+            uuid5(
+                NAMESPACE_URL,
+                f"{version_namespace}:{profile}:{index}:{chunk_text_digest(chunk.page_content)}",
+            )
+        )
+        for index, chunk in enumerate(chunks)
+    ]
+    for index, (chunk, chunk_id) in enumerate(zip(chunks, chunk_ids, strict=True)):
+        document_index = chunk.metadata.pop("_ingestion_document_index", None)
+        start_index = chunk.metadata.get("start_index")
+        source_text = (
+            documents[document_index].page_content
+            if isinstance(document_index, int)
+            and 0 <= document_index < len(documents)
+            else ""
+        )
+        section_path = (
+            section_path_at_offset(source_text, start_index)
+            if source_text and isinstance(start_index, int)
+            else _find_section_path(chunk.page_content, chunk.metadata)
+        )
+        chunk.metadata.update(
+            {
+                "chunk_id": chunk_id,
+                "chunk_index": index,
+                "section_path": section_path,
+                "chunking_profile": profile,
+                "content_sha256": content_digest,
+                "embedding_deployment": settings.azure_openai_embedding_deployment,
+                "embedding_api_version": settings.azure_openai_api_version,
+                "vision_profile": vision_profile,
+                "ingestion_pipeline_version": INGESTION_PIPELINE_VERSION,
+            }
+        )
+
     embeddings = AzureOpenAIEmbeddings(
         azure_endpoint=settings.azure_openai_endpoint,
         azure_deployment=settings.azure_openai_embedding_deployment,
@@ -197,6 +248,8 @@ def process_and_store_file(
     storage_started_at = time.perf_counter()
     document_id: str | None = None
     version_id: str | None = None
+    embedded_chunk_count = len(chunks)
+    reused_embedding_count = 0
     if engine is not None:
         document_id, version_id = _register_uploaded_version(
             engine,
@@ -204,9 +257,10 @@ def process_and_store_file(
             filename=original_filename,
             file_type=file_type,
             content_digest=content_digest,
+            owner_subject=owner_subject,
         )
         existing_ids = _existing_chunk_ids(engine, version_id, profile)
-        if len(existing_ids) == len(chunks):
+        if existing_ids == chunk_ids:
             logger.info(
                 "Document version already indexed; skipping unchanged upload",
                 extra={
@@ -218,7 +272,11 @@ def process_and_store_file(
                 },
             )
             _activate_version(engine, document_id, version_id)
-            return _ingestion_result(
+            _start_upload_run(
+                engine, run_id, source_key, version_id, owner_subject
+            )
+            _finish_upload_run(engine, run_id, len(existing_ids))
+            result = _ingestion_result(
                 original_filename,
                 file_type,
                 chunks,
@@ -227,6 +285,9 @@ def process_and_store_file(
                 existing_ids,
                 time.perf_counter() - started_at,
             )
+            result["ingestion_id"] = run_id
+            return result
+        _start_upload_run(engine, run_id, source_key, version_id, owner_subject)
     logger.info(
         "Starting document chunk storage",
         extra={
@@ -241,7 +302,13 @@ def process_and_store_file(
             name="embed-document-chunks",
             as_type="span",
             input={"chunk_count": len(chunks), "content_captured": False},
-            metadata={"embedding_dimensions": EMBEDDING_DIMENSIONS},
+            metadata={
+                "embedding_dimensions": EMBEDDING_DIMENSIONS,
+                "embedding_deployment": settings.azure_openai_embedding_deployment,
+                "embedding_api_version": settings.azure_openai_api_version,
+                "vision_profile": vision_profile,
+                "chunking_profile": profile,
+            },
         ) as embedding_trace:
             if engine is None:
                 # Legacy helper mode; the Knowledge Operations API supplies the
@@ -254,20 +321,64 @@ def process_and_store_file(
                 stored_ids = vectorstore.add_documents(chunks, ids=chunk_ids)
                 vectors = None
             else:
-                vectors = embeddings.embed_documents(
-                    [chunk.page_content for chunk in chunks]
+                assert document_id is not None
+                reusable_vectors = load_reusable_chunk_vectors(
+                    engine, document_id, profile
                 )
-                if len(vectors) != len(chunks) or any(
+                vector_slots: list[list[float] | None] = [None] * len(chunks)
+                missing_by_digest: dict[str, tuple[str, list[int]]] = {}
+                reused_embedding_count = 0
+                for index, chunk in enumerate(chunks):
+                    digest = chunk_text_digest(chunk.page_content)
+                    existing_vector = reusable_vectors.get(digest)
+                    if existing_vector is not None:
+                        vector_slots[index] = existing_vector
+                        reused_embedding_count += 1
+                    else:
+                        if digest not in missing_by_digest:
+                            missing_by_digest[digest] = (chunk.page_content, [])
+                        missing_by_digest[digest][1].append(index)
+                missing_digests = list(missing_by_digest)
+                fresh_vectors = (
+                    embeddings.embed_documents(
+                        [missing_by_digest[digest][0] for digest in missing_digests]
+                    )
+                    if missing_digests
+                    else []
+                )
+                if len(fresh_vectors) != len(missing_digests) or any(
                     len(vector) != EMBEDDING_DIMENSIONS
                     or not all(math.isfinite(value) for value in vector)
-                    for vector in vectors
+                    for vector in fresh_vectors
                 ):
                     raise RuntimeError("Embedding provider returned invalid vectors.")
+                for digest, vector in zip(
+                    missing_digests, fresh_vectors, strict=True
+                ):
+                    for index in missing_by_digest[digest][1]:
+                        vector_slots[index] = vector
+                vectors = [vector for vector in vector_slots if vector is not None]
+                if len(vectors) != len(chunks):
+                    raise RuntimeError("Embedding reuse returned an incomplete vector set.")
+                embedded_chunk_count = len(missing_digests)
+                logger.info(
+                    "Document embeddings prepared",
+                    extra={
+                        "event": "document_ingestion.embeddings_prepared",
+                        "source_id": source_key,
+                        "chunk_count": len(chunks),
+                        "reused_embedding_count": reused_embedding_count,
+                        "new_embedding_count": len(missing_digests),
+                        "embedding_deployment": settings.azure_openai_embedding_deployment,
+                        "chunking_profile": profile,
+                    },
+                )
                 stored_ids = chunk_ids
             if embedding_trace is not None:
                 embedding_trace.update(
                     output={
-                        "embedded_chunk_count": len(chunks),
+                        "embedded_chunk_count": embedded_chunk_count,
+                        "reused_embedding_count": reused_embedding_count,
                         "content_captured": False,
                     }
                 )
@@ -344,7 +455,19 @@ def process_and_store_file(
                     .where(document_versions.c.document_version_id == version_id)
                     .values(validation_status="valid")
                 )
+            _finish_upload_run(engine, run_id, len(rows))
     except Exception:
+        if engine is not None:
+            try:
+                _fail_upload_run(engine, run_id)
+            except Exception:
+                logger.exception(
+                    "Failed to persist the terminal upload-run status",
+                    extra={
+                        "event": "document_ingestion.run_status_failed",
+                        "ingestion_id": run_id,
+                    },
+                )
         logger.exception(
             "Document chunk storage failed",
             extra={
@@ -371,7 +494,7 @@ def process_and_store_file(
             **({"collection_name": collection_name} if collection_name else {}),
         },
     )
-    return _ingestion_result(
+    result = _ingestion_result(
         original_filename,
         file_type,
         chunks,
@@ -380,6 +503,8 @@ def process_and_store_file(
         stored_ids,
         time.perf_counter() - started_at,
     )
+    result["ingestion_id"] = run_id
+    return result
 
 
 def _register_uploaded_version(
@@ -389,6 +514,7 @@ def _register_uploaded_version(
     filename: str,
     file_type: str,
     content_digest: str,
+    owner_subject: str | None,
 ) -> tuple[str, str]:
     """Create stable source/version identities so retries use the same rows."""
     document_id = str(uuid5(NAMESPACE_URL, f"friis:{source_key}"))
@@ -410,7 +536,7 @@ def _register_uploaded_version(
                     title=filename,
                     source_type="uploaded_document",
                     source_uri=source_uri,
-                    owner="FRIIS operator upload",
+                    owner=owner_subject or "FRIIS operator upload",
                     access_classification="internal",
                     approved=True,
                     enabled=True,
@@ -473,6 +599,96 @@ def _existing_chunk_ids(engine: Engine, version_id: str, profile: str) -> list[s
                 )
                 .order_by(document_chunks.c.chunk_index)
             ).scalars()
+        )
+
+
+def _start_upload_run(
+    engine: Engine,
+    ingestion_id: str,
+    source_key: str,
+    version_id: str,
+    owner_subject: str | None,
+) -> None:
+    now = datetime.now(UTC)
+    with engine.begin() as connection:
+        connection.execute(
+            insert(ingestion_runs).values(
+                ingestion_id=ingestion_id,
+                run_type="incremental",
+                status=IngestionStatus.RUNNING.value,
+                initiated_by=owner_subject or "FRIIS operator upload",
+                pipeline_version=INGESTION_PIPELINE_VERSION,
+                source_type="documents",
+                source_ids=[source_key],
+                validation_errors=[],
+                started_at=now,
+                completed_at=None,
+                created_at=now,
+            )
+        )
+        connection.execute(
+            insert(ingestion_run_items).values(
+                ingestion_id=ingestion_id,
+                document_version_id=version_id,
+                status=IngestionStatus.RUNNING.value,
+                records_processed=0,
+                chunks_created=0,
+                chunks_indexed=0,
+                error_code=None,
+                error_message=None,
+                started_at=now,
+                completed_at=None,
+            )
+        )
+
+
+def _finish_upload_run(
+    engine: Engine, ingestion_id: str, chunk_count: int
+) -> None:
+    now = datetime.now(UTC)
+    with engine.begin() as connection:
+        connection.execute(
+            update(ingestion_run_items)
+            .where(ingestion_run_items.c.ingestion_id == ingestion_id)
+            .values(
+                status=IngestionStatus.SUCCEEDED.value,
+                records_processed=1,
+                chunks_created=chunk_count,
+                chunks_indexed=chunk_count,
+                completed_at=now,
+            )
+        )
+        connection.execute(
+            update(ingestion_runs)
+            .where(ingestion_runs.c.ingestion_id == ingestion_id)
+            .values(
+                status=IngestionStatus.SUCCEEDED.value,
+                completed_at=now,
+            )
+        )
+
+
+def _fail_upload_run(engine: Engine, ingestion_id: str) -> None:
+    now = datetime.now(UTC)
+    with engine.begin() as connection:
+        connection.execute(
+            update(ingestion_run_items)
+            .where(ingestion_run_items.c.ingestion_id == ingestion_id)
+            .values(
+                status=IngestionStatus.FAILED.value,
+                error_code="upload_processing_failed",
+                error_message="Document processing failed.",
+                completed_at=now,
+            )
+        )
+        connection.execute(
+            update(ingestion_runs)
+            .where(ingestion_runs.c.ingestion_id == ingestion_id)
+            .values(
+                status=IngestionStatus.FAILED.value,
+                validation_errors=["Document processing failed."],
+                completed_at=now,
+            )
         )
 
 

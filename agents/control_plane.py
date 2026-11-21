@@ -44,12 +44,22 @@ _SYNTHESIS_PROMPT = ChatPromptTemplate.from_messages(
         for message in _SYNTHESIS_PROMPT_DEFINITION["messages"]
     ]
 )
+_QUERY_RESULT_EVALUATOR_PROMPT_DEFINITION = get_prompt(
+    "friis-query-result-evaluator"
+)
+_QUERY_RESULT_EVALUATOR_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (message["role"], message["content"])
+        for message in _QUERY_RESULT_EVALUATOR_PROMPT_DEFINITION["messages"]
+    ]
+)
 
 MAX_SPECIALISTS = 3
 MAX_EVIDENCE_ITEMS = 12
 MAX_EVIDENCE_CHARS = 1600
 MAX_AGENT_SECONDS = 40.0
 MAX_SYNTHESIS_SECONDS = 30.0
+MAX_RESULT_EVALUATION_SECONDS = 15.0
 # A specialist gets its initial attempt plus two bounded retries. The workflow
 # deadline covers a leaf, a dependent manager, specialist retries, and synthesis.
 MAX_WORKFLOW_SECONDS = 200.0
@@ -221,6 +231,17 @@ class OrchestrationResult(BaseModel):
     limitations: tuple[str, ...] = ()
     clarification_question: str | None = None
     escalation: EscalationPacket | None = None
+
+
+class QueryResultQualityScores(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    faithfulness: float = Field(ge=0, le=1)
+    correctness: float = Field(ge=0, le=1)
+    answer_relevance: float = Field(ge=0, le=1)
+    context_precision: float = Field(ge=0, le=1)
+    usefulness: float = Field(ge=0, le=1)
+    confidence: float = Field(ge=0, le=1)
 
 
 @dataclass(frozen=True)
@@ -476,6 +497,7 @@ class DocumentRetrievalAgent:
             .where(
                 source_documents.c.approved.is_(True),
                 source_documents.c.enabled.is_(True),
+                source_documents.c.access_classification == "internal",
                 document_versions.c.validation_status == "valid",
                 document_chunks.c.chunk_text.is_not(None),
             )
@@ -842,11 +864,13 @@ class AzureSynthesisAgent:
         api_key: str,
         api_version: str,
         deployment: str,
+        evaluator_deployment: str | None = None,
         timeout_seconds: float = MAX_SYNTHESIS_SECONDS,
     ) -> None:
         if not all((endpoint, api_key, api_version, deployment)):
             raise ValueError("Azure OpenAI synthesis settings are required")
         self.deployment = deployment
+        self.evaluator_deployment = evaluator_deployment or deployment
         chat_model_options: dict[str, Any] = {
             "azure_endpoint": endpoint,
             "api_key": api_key,
@@ -862,6 +886,20 @@ class AzureSynthesisAgent:
         ):
             chat_model_options["temperature"] = 0
         self._client = AzureChatOpenAI(**chat_model_options)
+        self._evaluator_client = self._client
+        if self.evaluator_deployment != deployment:
+            evaluator_options = {
+                **chat_model_options,
+                "azure_deployment": self.evaluator_deployment,
+                "model": self.evaluator_deployment,
+                "timeout": MAX_RESULT_EVALUATION_SECONDS,
+            }
+            evaluator_model_name = self.evaluator_deployment.casefold()
+            if evaluator_model_name.startswith("gpt-5") and not (
+                evaluator_model_name.startswith("gpt-5-chat")
+            ):
+                evaluator_options.pop("temperature", None)
+            self._evaluator_client = AzureChatOpenAI(**evaluator_options)
 
     async def synthesize(
         self,
@@ -945,8 +983,101 @@ class AzureSynthesisAgent:
             )
         return result
 
+    async def evaluate_result(
+        self,
+        query_id: str,
+        question: str,
+        result: OrchestrationResult,
+    ) -> QueryResultQualityScores:
+        """Judge a sanitized query result against its cited evidence."""
+        answer = result.answer or result.clarification_question
+        citations = [
+            {
+                "source_title": citation.source_title,
+                "evidence_type": citation.evidence_type,
+                "excerpt": citation.excerpt,
+            }
+            for citation in result.citations[:MAX_EVIDENCE_ITEMS]
+        ]
+        escalation_reason = None
+        if result.escalation is not None:
+            answer = answer or result.escalation.requested_review
+            escalation_reason = result.escalation.reason
+            if not citations:
+                citations = [
+                    {
+                        "source_title": item.source_title,
+                        "excerpt": item.excerpt,
+                    }
+                    for item in result.escalation.evidence[:MAX_EVIDENCE_ITEMS]
+                ]
+        if not answer:
+            raise ValueError("A query result needs text before it can be evaluated.")
+
+        payload = {
+            "question": question,
+            "status": result.status.value,
+            "answer": answer,
+            "escalation_reason": escalation_reason,
+            "limitations": list(result.limitations),
+            "citations": citations,
+        }
+        try:
+            with observation(
+                name="query-result-quality-evaluation",
+                as_type="generation",
+                input={"citation_count": len(citations), "content_captured": False},
+                metadata={
+                    "query_id": query_id,
+                    "evaluator_prompt": _QUERY_RESULT_EVALUATOR_PROMPT_DEFINITION[
+                        "name"
+                    ],
+                    "evaluator_prompt_version": _QUERY_RESULT_EVALUATOR_PROMPT_DEFINITION[
+                        "version"
+                    ],
+                },
+                model=self.evaluator_deployment,
+            ) as span:
+                response = await asyncio.wait_for(
+                    self._evaluator_client.bind(
+                        response_format={"type": "json_object"}
+                    ).ainvoke(
+                        _QUERY_RESULT_EVALUATOR_PROMPT.format_messages(
+                            evaluation_payload=json.dumps(payload, default=str)
+                        )
+                    ),
+                    timeout=MAX_RESULT_EVALUATION_SECONDS,
+                )
+        except (APIConnectionError, APITimeoutError, APIError, TimeoutError) as exc:
+            logger.warning(
+                "Query result quality evaluation provider failed",
+                extra={
+                    "query_id": query_id,
+                    "error_type": type(exc).__name__,
+                    "provider_status_code": getattr(exc, "status_code", None),
+                },
+            )
+            raise ControlPlaneError("Query result quality evaluation failed.") from exc
+
+        content = response.content
+        if not isinstance(content, str) or not content.strip():
+            raise ControlPlaneError(
+                "Query result quality evaluation returned an empty payload."
+            )
+        try:
+            scores = QueryResultQualityScores.model_validate_json(content)
+        except (ValidationError, ValueError) as exc:
+            raise ControlPlaneError(
+                "Query result quality evaluation returned invalid scores."
+            ) from exc
+        if span is not None:
+            span.update(output={"scores": scores.model_dump()})
+        return scores
+
     async def aclose(self) -> None:
         await self._client.root_async_client.close()
+        if self._evaluator_client is not self._client:
+            await self._evaluator_client.root_async_client.close()
 
 
 class SupervisorAgent:

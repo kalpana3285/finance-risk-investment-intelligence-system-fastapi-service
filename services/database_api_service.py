@@ -107,7 +107,9 @@ class DatabaseAPIService(APIService):
         if not decision.allowed:
             raise InvalidQueryError(decision.reason or "Query input is invalid.")
         if request.portfolio_id is not None:
-            _require_portfolio_scope(principal, request.portfolio_id)
+            _require_portfolio_scope(
+                principal, request.portfolio_id, action="query.submit"
+            )
         now = _utcnow()
         query_id = str(uuid4())
 
@@ -250,6 +252,16 @@ class DatabaseAPIService(APIService):
 
         row = await asyncio.to_thread(fetch)
         if row is None:
+            logger.warning(
+                "Query access denied or query not found",
+                extra={
+                    "event": "authorization.denied",
+                    "principal_subject": principal.subject,
+                    "action": "query.read",
+                    "resource_type": "query",
+                    "resource_id": query_id,
+                },
+            )
             return None
         return QueryResponse(
             query_id=row["query_id"],
@@ -293,7 +305,9 @@ class DatabaseAPIService(APIService):
     async def get_portfolio(
         self, principal: Principal, portfolio_id: int
     ) -> PortfolioDetailResponse | None:
-        _require_portfolio_scope(principal, portfolio_id)
+        _require_portfolio_scope(
+            principal, portfolio_id, action="portfolio.read"
+        )
 
         def fetch() -> tuple[dict[str, Any] | None, list[dict[str, Any]], list[dict[str, Any]]]:
             with self.engine.connect() as connection:
@@ -510,6 +524,10 @@ class DatabaseAPIService(APIService):
                     "Unsupported structured-data source(s): "
                     + ", ".join(sorted(invalid_sources))
                 )
+            raise InvalidIngestionRequest(
+                "Structured-data ingestion is not available in the configured "
+                "ingestion worker."
+            )
         else:
             def validate_sources() -> set[str]:
                 with self.engine.connect() as connection:
@@ -738,11 +756,23 @@ def _escalation_scope_filter(principal: Principal) -> list[Any]:
     ]
 
 
-def _require_portfolio_scope(principal: Principal, portfolio_id: int) -> None:
+def _require_portfolio_scope(
+    principal: Principal, portfolio_id: int, *, action: str
+) -> None:
     if (
         not principal.all_portfolios_access
         and portfolio_id not in principal.portfolio_ids
     ):
+        logger.warning(
+            "Portfolio access denied",
+            extra={
+                "event": "authorization.denied",
+                "principal_subject": principal.subject,
+                "action": action,
+                "resource_type": "portfolio",
+                "resource_id": portfolio_id,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="The caller is not authorized to access this portfolio.",
