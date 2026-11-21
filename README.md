@@ -121,25 +121,22 @@ tools are not request-scoped, the endpoint also requires an explicit
 all-portfolios access claim. Its tools are read-only and do not mutate database
 state.
 
-10. Optional Langfuse tracing uses the Langfuse Python SDK 5.x. Set
-    `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and optionally
-    `LANGFUSE_BASE_URL` plus `LANGFUSE_TRACING_ENVIRONMENT` in the local `.env`.
-    When enabled with both credentials, FRIIS loads managed prompt templates
-    from Langfuse by their catalog names and configured labels. Missing prompts
-    and unsupported prompt formats are logged and use the
-    local catalog template; authentication and other fetch failures are
-    explicit. Without credentials or with `LANGFUSE_ENABLED=false`, the local
-    prompt catalog is used. Managed prompts are loaded when their workflow
-    modules are initialized, so restart the application after publishing
-    prompt changes.
-    Tracing is disabled when credentials are absent or
-    `LANGFUSE_ENABLED=false`; FRIIS continues to run normally. Query processing creates a trace with
-    specialist, retrieval, embedding, and synthesis observations. The synthesis
-    observation records prompt name, version, label, and source (`langfuse` or
-    `local`) without capturing prompt content. Upload and approved-source
-    ingestion also create processing observations. Every trace includes flow
-    identifiers, selected portfolio scope, step counts, model names, and token
-    usage when the provider returns it. User prompts, model
+10. FRIIS requires managed prompts from Langfuse (Python SDK 5.x). Set
+    `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and `LANGFUSE_ENABLED=true`,
+    and optionally set `LANGFUSE_BASE_URL` plus
+    `LANGFUSE_TRACING_ENVIRONMENT` in the local `.env`. The local catalog
+    contains prompt names and metadata only; it has no prompt text or fallback.
+    Missing prompts, unsupported prompt formats, or unavailable Langfuse
+    credentials raise an error instead of using a local prompt. Prompts are
+    loaded when their workflow modules initialize, so restart the application
+    after publishing prompt changes.
+    Query processing creates a Langfuse trace with specialist, retrieval,
+    embedding, and synthesis observations. The synthesis observation records
+    the managed prompt name, version, label, and `prompt_source: "langfuse"`
+    without capturing prompt content. Upload and approved-source ingestion
+    also create processing observations. Every trace includes flow identifiers,
+    selected portfolio scope, step counts, model names, and token usage when
+    the provider returns it. User prompts, model
     answers, retrieved excerpts, portfolio records, uploaded filenames, and
     document text are not sent to Langfuse. Keep Langfuse credentials in `.env`
     and verify your organization's observability data-handling approval before

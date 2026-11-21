@@ -90,16 +90,13 @@ def test_catalog_loads_managed_text_prompt(
     assert prompt["template"] == "Managed tool-agent instructions"
 
 
-def test_catalog_uses_local_template_when_langfuse_is_unconfigured(
+def test_catalog_requires_langfuse_prompt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(langfuse_tracing, "fetch_prompt", lambda **_kwargs: None)
 
-    prompt = get_prompt("finance-synthesis")
-
-    assert prompt["version"] == 1
-    assert prompt["name"] == "friis-finance-synthesis"
-    assert prompt["source"] == "local"
+    with pytest.raises(RuntimeError, match="Required Langfuse prompt"):
+        get_prompt("finance-synthesis")
 
 
 def test_catalog_does_not_hide_managed_prompt_fetch_failure(
@@ -162,6 +159,24 @@ def test_catalog_adapts_plain_text_prompt_as_system_message(
         {"role": "system", "content": "Managed system prompt"},
         {"role": "user", "content": "{request_payload}"},
     ]
+
+
+def test_catalog_rejects_unsupported_managed_chat_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    managed_prompt = FakeManagedPrompt(
+        name="friis-finance-synthesis",
+        version=7,
+        labels=["production"],
+        variables=["request_payload"],
+        messages=[],
+    )
+    monkeypatch.setattr(
+        langfuse_tracing, "fetch_prompt", lambda **_kwargs: managed_prompt
+    )
+
+    with pytest.raises(RuntimeError, match="not a supported chat prompt"):
+        get_prompt("finance-synthesis")
 
 
 def test_rag_evaluator_uses_langfuse_production_text_prompt(
@@ -250,7 +265,7 @@ def test_fetch_prompt_rejects_partial_credentials(
         )
 
 
-def test_fetch_prompt_uses_local_fallback_for_missing_prompt(
+def test_fetch_prompt_returns_none_for_missing_prompt(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -274,4 +289,4 @@ def test_fetch_prompt_uses_local_fallback_for_missing_prompt(
         )
         is None
     )
-    assert "local catalog will be used" in caplog.text
+    assert "Required Langfuse prompt was not found" in caplog.text

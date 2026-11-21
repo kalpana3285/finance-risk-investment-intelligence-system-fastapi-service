@@ -138,7 +138,7 @@ def fetch_prompt(
     except Exception as exc:
         if getattr(exc, "status_code", None) == 404:
             logger.warning(
-                "Langfuse prompt was not found; the local catalog will be used",
+                "Required Langfuse prompt was not found",
                 extra={
                     "prompt_name": name,
                     "prompt_type": prompt_type,
