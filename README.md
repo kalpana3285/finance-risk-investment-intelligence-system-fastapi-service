@@ -144,6 +144,9 @@ state.
     document text are not sent to Langfuse. Keep Langfuse credentials in `.env`
     and verify your organization's observability data-handling approval before
     enabling remote tracing.
+    When the root trace is created, a `query.trace.created` log includes the
+    durable `query_id` and matching Langfuse `trace_id` to correlate application
+    and trace events.
     Completed, clarification, and escalated query results are scored for
     faithfulness, correctness, answer relevance, context precision, usefulness,
     and confidence on a 0-1 scale. A bounded evaluator call uses the PII-redacted

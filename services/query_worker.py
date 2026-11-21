@@ -125,6 +125,8 @@ class QueryWorker:
                 ),
             )
             return True
+        trace_context = _query_trace_context(query["query_id"])
+        trace_id = (trace_context or {}).get("trace_id")
         logger.info(
             "Query processing started",
             extra={
@@ -135,13 +137,14 @@ class QueryWorker:
         )
         event_sink = self._event_sink(query["query_id"])
         safe_query = query
-        trace_context = _query_trace_context(query["query_id"])
+        trace_created = False
         try:
             with trace_attributes(
                 session_id=query.get("session_id"),
                 tags=["friis", "research"],
                 metadata={
                     "query_id": query["query_id"],
+                    **({"trace_id": trace_id} if trace_id is not None else {}),
                     **(
                         {"portfolio_id": str(query["portfolio_id"])}
                         if query.get("portfolio_id") is not None
@@ -155,6 +158,7 @@ class QueryWorker:
                     input={"content_captured": False},
                     metadata={
                         "query_id": query["query_id"],
+                        **({"trace_id": trace_id} if trace_id is not None else {}),
                         "portfolio_id": query.get("portfolio_id"),
                         "authorized_portfolio_count": len(
                             query.get("authorized_portfolio_ids") or ()
@@ -162,6 +166,16 @@ class QueryWorker:
                     },
                     trace_context=trace_context,
                 ) as trace:
+                    trace_created = trace is not None and trace_id is not None
+                    if trace_created:
+                        logger.info(
+                            "Langfuse query trace created",
+                            extra={
+                                "event": "query.trace.created",
+                                "query_id": query["query_id"],
+                                "trace_id": trace_id,
+                            },
+                        )
                     result = await self.supervisor_factory(event_sink).run(context)
                     result, pii_detected = self.guardrails_validator.sanitize_result(
                         result
@@ -190,7 +204,7 @@ class QueryWorker:
                         )
                     quality_scores = await self._evaluate_result_scores(
                         query_id=query["query_id"],
-                        trace_id=(trace_context or {}).get("trace_id"),
+                        trace_id=trace_id,
                         question=context.question,
                         result=result,
                     )
@@ -273,6 +287,7 @@ class QueryWorker:
             "Query workflow produced a terminal result",
             extra={
                 "query_id": query["query_id"],
+                "trace_id": trace_id if trace_created else None,
                 "query_status": result.status.value,
             },
         )
@@ -289,9 +304,7 @@ class QueryWorker:
                         self.handoff_email_sender,
                         self._handoff_email_context(
                             query_id=query["query_id"],
-                            trace_id=(trace_context or {}).get(
-                                "trace_id", query["query_id"]
-                            ),
+                            trace_id=trace_id or query["query_id"],
                             handoff_reason=handoff_reason,
                             quality_scores=quality_scores,
                             high_priority=quality_threshold_failed,

@@ -24,6 +24,7 @@ CONTEXT_FIELDS = (
     "processing_time_seconds",
     "request_time_seconds",
     "query_id",
+    "trace_id",
     "query_status",
     "user_query",
     "portfolio_id",

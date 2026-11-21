@@ -1,3 +1,4 @@
+import logging
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -262,8 +263,9 @@ async def test_worker_redacts_pii_from_persisted_answers_and_citations(engine):
 
 @pytest.mark.asyncio
 async def test_worker_scores_sanitized_result_on_its_langfuse_trace(
-    engine, monkeypatch
+    engine, monkeypatch, caplog
 ):
+    caplog.set_level(logging.INFO, logger="services.query_worker")
     sensitive_value = "analyst@example.com"
     query_id = _insert_query(
         engine,
@@ -283,6 +285,11 @@ async def test_worker_scores_sanitized_result_on_its_langfuse_trace(
     )
     evaluator_calls = []
     recorded_scores = []
+    observations = []
+
+    class FakeSpan:
+        def update(self, **_kwargs):
+            pass
 
     async def evaluate_result(evaluated_query_id, question, evaluated_result):
         evaluator_calls.append(
@@ -306,7 +313,14 @@ async def test_worker_scores_sanitized_result_on_its_langfuse_trace(
     monkeypatch.setattr(
         query_worker_module,
         "observation",
-        lambda **_kwargs: nullcontext(None),
+        lambda **kwargs: (
+            observations.append(kwargs)
+            or nullcontext(
+                FakeSpan()
+                if kwargs["name"] == "friis-research-query"
+                else None
+            )
+        ),
     )
     monkeypatch.setattr(
         query_worker_module,
@@ -327,6 +341,19 @@ async def test_worker_scores_sanitized_result_on_its_langfuse_trace(
 
     assert await worker.run_once()
 
+    trace_id = query_id.replace("-", "")
+    assert any(
+        record.getMessage() == "Langfuse query trace created"
+        and getattr(record, "query_id", None) == query_id
+        and getattr(record, "trace_id", None) == trace_id
+        for record in caplog.records
+    )
+    root_trace = next(
+        item for item in observations if item["name"] == "friis-research-query"
+    )
+    assert root_trace["trace_context"] == {"trace_id": trace_id}
+    assert root_trace["metadata"]["trace_id"] == trace_id
+
     evaluated_query_id, evaluated_question, evaluated_result = evaluator_calls[0]
     assert evaluated_query_id == query_id
     assert sensitive_value not in evaluated_question
@@ -334,7 +361,7 @@ async def test_worker_scores_sanitized_result_on_its_langfuse_trace(
     assert sensitive_value not in evaluated_result.citations[0].excerpt
     assert recorded_scores == [
         {
-            "trace_id": query_id.replace("-", ""),
+            "trace_id": trace_id,
             "scores": {
                 "faithfulness": 0.9,
                 "correctness": 0.9,
